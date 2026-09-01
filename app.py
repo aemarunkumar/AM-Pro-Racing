@@ -1,11 +1,11 @@
+import os
+import re
+import tempfile
 import streamlit as st
-import requests
+import cloudscraper
 from bs4 import BeautifulSoup
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
-import tempfile
-import os
-import re
 
 st.set_page_config(
     page_title="AM PRO Racing Mobile",
@@ -44,33 +44,43 @@ st.markdown("<div class='main-title'>🏇 AM PRO Racing System</div>", unsafe_al
 st.markdown("<div class='sub-title'>Step 1: URL to Excel (Scraper & Col T) | Step 2: Process Edited Excel (AM Score & Highlighting)</div>", unsafe_allow_html=True)
 
 # =====================================================================
-# RACING AUSTRALIA SCRAPER ENGINE (MULTI-STRATEGY PARSER)
+# RACING AUSTRALIA SCRAPER (CLOUDFLARE BYPASS ENGINE)
 # =====================================================================
 
-def fetch_racing_html(url):
-    session = requests.Session()
-    # Normalize URL domain
+def fetch_racing_data_bypassed(url):
     target_url = url.strip()
-    if "racingaustralia.horse" in target_url and not "www.racingaustralia.horse" in target_url:
+    if "racingaustralia.horse" in target_url and "www.racingaustralia.horse" not in target_url:
         target_url = target_url.replace("racingaustralia.horse", "www.racingaustralia.horse")
 
+    # Cloudflare மற்றும் Bot Protection-ஐ கடந்து செல்லும் Scraper Session
+    scraper = cloudscraper.create_scraper(
+        browser={
+            'browser': 'chrome',
+            'platform': 'windows',
+            'desktop': True
+        }
+    )
+
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
-        "Connection": "keep-alive",
+        "Referer": "https://www.racingaustralia.horse/",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-User": "?1",
         "Upgrade-Insecure-Requests": "1"
     }
 
-    resp = session.get(target_url, headers=headers, timeout=30, allow_redirects=True)
-    resp.encoding = 'utf-8'
-    return resp.text, resp.status_code, target_url
+    response = scraper.get(target_url, headers=headers, timeout=40)
+    response.encoding = 'utf-8'
+    return response.text, response.status_code, target_url
 
-def parse_meeting_data(html_content):
-    soup = BeautifulSoup(html_content, "html.parser")
+def parse_racing_html(html_text):
+    soup = BeautifulSoup(html_text, "html.parser")
     races = []
-    
-    # Strategy 1: Find by race-tables / bigborder / form tables
+
+    # Strategy 1: Race Tables Parsing
     all_tables = soup.find_all("table")
     current_race_idx = 1
 
@@ -78,48 +88,45 @@ def parse_meeting_data(html_content):
         rows = tbl.find_all("tr")
         if len(rows) < 2:
             continue
-        
+
         horses = []
         for r in rows:
             cells = r.find_all(["td", "th"])
             if len(cells) < 4:
                 continue
-            
+
             c_texts = [re.sub(r'\s+', ' ', c.get_text(strip=True)) for c in cells]
-            
-            # Check for Horse Number in 1st cell
-            match_no = re.match(r"^(\d{1,2})\b", c_texts[0])
-            if match_no:
-                h_no = match_no.group(1)
+            first_col = c_texts[0].strip()
+
+            # Horse Row கண்டறிதல் (எண்ணில் தொடங்குவது)
+            if re.match(r"^\d{1,2}$", first_col):
+                h_no = first_col
                 h_name = c_texts[1] if len(c_texts) > 1 else ""
                 
-                # Filter out table header rows
                 if h_name.lower() in ["horse", "horse name", "name", "runner"]:
                     continue
-                
-                # Cleanup horse name
-                h_name = re.sub(r"\s*\([A-Z0-9a-z\s]+\)$", "", h_name).strip()
+
+                h_name_clean = re.sub(r"\s*\([A-Z0-9a-z\s]+\)$", "", h_name).strip()
                 jockey = c_texts[2] if len(c_texts) > 2 else ""
                 trainer = c_texts[3] if len(c_texts) > 3 else ""
                 weight = c_texts[4] if len(c_texts) > 4 else ""
 
                 horses.append({
                     "horse_no": h_no,
-                    "horse_name": h_name,
+                    "horse_name": h_name_clean,
                     "jockey": jockey,
                     "trainer": trainer,
                     "weight": weight
                 })
 
         if len(horses) >= 2:
-            # Look for race title if available above table
             races.append({
                 "race_name": f"Race {current_race_idx}",
                 "horses": horses
             })
             current_race_idx += 1
 
-    # Strategy 2: If no table matched, search for links containing Horse.aspx
+    # Strategy 2: Links Fallback
     if not races:
         horse_links = soup.find_all("a", href=re.compile(r"Horse\.aspx", re.I))
         if horse_links:
@@ -197,8 +204,23 @@ def build_excel_workbook(races):
 
     return wb
 
+def apply_am_scoring_step2(wb):
+    ws = wb.active
+    high_fill = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
+    font_bold = Font(name="Arial", size=11, bold=True, color="166534")
+
+    for r in range(2, ws.max_row + 1):
+        pos_val = str(ws.cell(row=r, column=12).value or "").strip()
+        score = 0
+        if pos_val in ["1", "2", "3"]:
+            score += 50
+            ws.cell(row=r, column=12).fill = high_fill
+            ws.cell(row=r, column=12).font = font_bold
+            ws.cell(row=r, column=20).value = "QUALIFIED"
+        ws.cell(row=r, column=19).value = score
+
 # =====================================================================
-# UI INTERFACE
+# UI TABS
 # =====================================================================
 
 tab1, tab2 = st.tabs(["🌐 STEP 1: URL Scraper (Col T)", "📊 STEP 2: Process Edited Excel (AM Score)"])
@@ -220,18 +242,15 @@ with tab1:
         else:
             status_box = st.status("🔄 பந்தய தகவல்கள் பெறப்படுகின்றன...", expanded=True)
             try:
-                status_box.write("🌐 1. இணையதள இணைப்பு பெறப்படுகிறது...")
-                html_text, status_code, final_url = fetch_racing_html(cleaned_url)
+                status_box.write("🌐 1. Cloudflare பைபாஸ் மூலம் இணையதள இணைப்பு பெறப்படுகிறது...")
+                html_text, status_code, final_url = fetch_racing_data_bypassed(cleaned_url)
 
                 status_box.write("📋 2. குதிரை மற்றும் பந்தய விவரங்கள் பிரித்தெடுக்கப்படுகின்றன...")
-                races = parse_meeting_data(html_text)
+                races = parse_racing_html(html_text)
 
                 if not races:
                     status_box.update(label="❌ ரேஸ் விவரங்கள் கண்டறியப்படவில்லை!", state="error")
                     st.error(f"இணையதளத்திலிருந்து தரவுகள் கிடைக்கவில்லை (HTTP Status: {status_code}).")
-                    with st.expander("🔍 Response விவரங்கள் (Debug Info)"):
-                        st.write(f"URL: {final_url}")
-                        st.write(f"HTML Length: {len(html_text)} எழுத்துக்கள்")
                 else:
                     total_horses = sum(len(r["horses"]) for r in races)
                     status_box.write(f"✅ {len(races)} பந்தயங்கள் | {total_horses} குதிரைகள் கண்டறியப்பட்டன.")
@@ -288,20 +307,11 @@ with tab2:
                         temp_in = tmp.name
 
                     wb = openpyxl.load_workbook(temp_in, data_only=False)
-                    ws = wb.active
-                    high_fill = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
-                    font_bold = Font(name="Arial", size=11, bold=True, color="166534")
+                    apply_am_scoring_step2(wb)
 
-                    for r in range(2, ws.max_row + 1):
-                        pos_val = str(ws.cell(row=r, column=12).value or "").strip()
-                        score = 0
-                        if pos_val in ["1", "2", "3"]:
-                            score += 50
-                            ws.cell(row=r, column=12).fill = high_fill
-                            ws.cell(row=r, column=12).font = font_bold
-                            ws.cell(row=r, column=20).value = "QUALIFIED"
-                        ws.cell(row=r, column=19).value = score
-
+                    wb.calculation.fullCalcOnLoad = True
+                    wb.calculation.forceFullCalc = True
+                    wb.calculation.calcMode = "auto"
                     wb.save(temp_in)
 
                     with open(temp_in, "rb") as f:
