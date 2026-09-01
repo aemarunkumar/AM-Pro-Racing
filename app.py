@@ -6,14 +6,18 @@ import traceback
 import openpyxl
 import streamlit as st
 
-# 1. பாத் அமைத்தல்
+# 1. அனைத்து கோப்பகப் பாதைகளையும் சேர்க்கவும்
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-for sub_dir in ["", "scraper", "engine", "database", "ui"]:
-    p = os.path.join(BASE_DIR, sub_dir) if sub_dir else BASE_DIR
-    if os.path.exists(p) and p not in sys.path:
-        sys.path.insert(0, p)
+for path_item in [BASE_DIR, os.path.join(BASE_DIR, "scraper"), os.path.join(BASE_DIR, "engine"), os.path.join(BASE_DIR, "database")]:
+    if os.path.exists(path_item) and path_item not in sys.path:
+        sys.path.insert(0, path_item)
 
-# 2. மாட்யூல்களை லோட் செய்தல் (துல்லியமான பிழைப் பதிவுகளுடன்)
+# 2. அனைத்து சப்-ஃபோல்டர்களையும் ஆழமாக இணைத்தல்
+for root, dirs, files in os.walk(BASE_DIR):
+    if root not in sys.path and ".git" not in root and "__pycache__" not in root:
+        sys.path.insert(0, root)
+
+# 3. தொகுதிகளை இறக்குமதி செய்தல்
 import_errors = {}
 
 try:
@@ -23,7 +27,7 @@ except Exception as e1:
         from racing_australia_scraper import RacingAustraliaScraper
     except Exception as e2:
         RacingAustraliaScraper = None
-        import_errors["RacingAustraliaScraper"] = f"{e1} | {e2}"
+        import_errors["RacingAustraliaScraper"] = f"Folder import: {e1} | Root import: {e2}"
 
 try:
     from engine.horse_history_collector import HorseHistoryCollector
@@ -32,7 +36,7 @@ except Exception as e1:
         from horse_history_collector import HorseHistoryCollector
     except Exception as e2:
         HorseHistoryCollector = None
-        import_errors["HorseHistoryCollector"] = f"{e1} | {e2}"
+        import_errors["HorseHistoryCollector"] = f"Folder import: {e1} | Root import: {e2}"
 
 try:
     from engine.excel_exporter import ExcelExporter
@@ -41,7 +45,7 @@ except Exception as e1:
         from excel_exporter import ExcelExporter
     except Exception as e2:
         ExcelExporter = None
-        import_errors["ExcelExporter"] = f"{e1} | {e2}"
+        import_errors["ExcelExporter"] = f"Folder import: {e1} | Root import: {e2}"
 
 try:
     from engine.am_score_engine import AMScoreEngine
@@ -50,7 +54,7 @@ except Exception as e1:
         from am_score_engine import AMScoreEngine
     except Exception as e2:
         AMScoreEngine = None
-        import_errors["AMScoreEngine"] = f"{e1} | {e2}"
+        import_errors["AMScoreEngine"] = f"Folder import: {e1} | Root import: {e2}"
 
 st.set_page_config(
     page_title="AM PRO Racing Mobile",
@@ -108,7 +112,12 @@ with tab1:
         if not cleaned_url:
             st.warning("⚠️ தயவுசெய்து சரியான Racing Australia URL-ஐ உள்ளிடவும்.")
         elif RacingAustraliaScraper is None or HorseHistoryCollector is None or ExcelExporter is None:
-            st.error("❌ சில மாட்யூல்களை லோட் செய்ய முடியவில்லை:")
+            st.error("❌ கோப்பகத்தில் உள்ள பைல் பெயர்கள்:")
+            try:
+                st.code("Files in current workspace:\n" + "\n".join(os.listdir(BASE_DIR)))
+            except Exception:
+                pass
+            st.error("சில மாட்யூல்களை லோட் செய்ய முடியவில்லை:")
             for mod, err in import_errors.items():
                 st.code(f"{mod}: {err}")
         else:
