@@ -40,7 +40,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown("<div class='main-title'>🏇 AM PRO Racing System</div>", unsafe_allow_html=True)
-st.markdown("<div class='sub-title'>Step 1: All Form HTML to Exact AM-PRO Multi-Sheet (R1..R8) | Step 2: AM Final Score</div>", unsafe_allow_html=True)
+st.markdown("<div class='sub-title'>Step 1: All Form HTML to Exact AM-PRO Multi-Sheet (Complete Past Runs & Highlights)</div>", unsafe_allow_html=True)
 
 # =====================================================================
 # HELPER & CLEANING FUNCTIONS
@@ -49,7 +49,7 @@ st.markdown("<div class='sub-title'>Step 1: All Form HTML to Exact AM-PRO Multi-
 def clean_jockey_name(name):
     if not name:
         return ""
-    cleaned = re.sub(r"\(a\d*(\.\d+)?(/[0-9.]+kg)?\)", "", name, flags=re.I)
+    cleaned = re.sub(r"\(a\d*(\.\d+)?(/[0-9.]+kg)?\)", "", str(name), flags=re.I)
     cleaned = re.sub(r"\(a\)", "", cleaned, flags=re.I)
     cleaned = re.sub(r"^(Ms|Mr|Mrs)\s+", "", cleaned.strip(), flags=re.I)
     return cleaned.strip().lower()
@@ -63,23 +63,22 @@ def extract_weight_num(w_str):
 def normalize_track(t_str):
     if not t_str:
         return ""
-    t_clean = t_str.strip().lower()
+    t_clean = str(t_str).strip().lower()
     if "good" in t_clean: return "good"
     if "soft" in t_clean: return "soft"
     if "heavy" in t_clean: return "heavy"
-    if "synthetic" in t_clean or "syn" in t_clean: return "syn"
+    if "synthetic" in t_clean or "syn" in t_clean or "tapeta" in t_clean: return "synthetic"
     if "firm" in t_clean: return "firm"
     return t_clean
 
-def is_recent_form_str(text):
-    # e.g., 11x1380321, 40x509x803, 8x1809x049, 433, 10x45
-    t = text.strip()
+def is_recent_form_code(text):
+    t = str(text).strip()
     if re.match(r"^[\dxXfsbL\-/]{2,}$", t) or (t.isdigit() and len(t) >= 2):
         return True
     return False
 
 # =====================================================================
-# RACING AUSTRALIA ALL FORM PARSER (EXACT DATA EXTRACTION)
+# COMPREHENSIVE ALL FORM HTML PARSER
 # =====================================================================
 
 def parse_all_form_html_full(html_text):
@@ -88,18 +87,15 @@ def parse_all_form_html_full(html_text):
     
     meeting_venue = "Sportsbet Sandown Hillside"
     meeting_country = "VIC"
-    meeting_date = "02/09/2026"
     
     title_elem = soup.find("h1") or soup.find("title")
     if title_elem:
         t_text = title_elem.get_text(separator=" ", strip=True)
-        m_date = re.search(r"(\d{1,2}\s+[A-Za-z]+\s+\d{4}|\d{1,2}/\d{1,2}/\d{4})", t_text)
-        if m_date: meeting_date = m_date.group(1)
-        m_place = re.search(r"(?:at\s+|-\s+)([A-Za-z0-9\s]+?)(?:\s+\(|Form|$)", t_text)
-        if m_place: meeting_venue = m_place.group(1).strip()
+        m_place = re.search(r"(?:at\s+|-\s+)([A-Za-z0-9\s%]+?)(?:\s+\(|Form|$)", t_text)
+        if m_place: 
+            meeting_venue = m_place.group(1).replace("%20", " ").strip()
 
-    # Race Blocks / Tables
-    race_blocks = soup.find_all(["div", "table"], class_=lambda c: c and any(k in str(c).lower() for k in ["race", "form", "meeting"]))
+    # Race Tables extraction
     tables = soup.find_all("table")
     race_counter = 1
 
@@ -119,14 +115,13 @@ def parse_all_form_html_full(html_text):
 
             first_col = txts[0].strip()
 
-            # 1. Horse Row (Horse No in first column)
-            if re.match(r"^\d{1,2}$", first_col) and len(txts) >= 4:
-                # Column 1 might be Recent Form (e.g. 11x1380321) or Horse Name
+            # 1. HORSE ENTRY ROW (Horse No in first col)
+            if re.match(r"^\d{1,2}$", first_col) and len(txts) >= 3:
                 col1 = txts[1].strip()
                 col2 = txts[2].strip() if len(txts) > 2 else ""
                 col3 = txts[3].strip() if len(txts) > 3 else ""
 
-                if is_recent_form_str(col1):
+                if is_recent_form_code(col1):
                     raw_horse_name = col2
                     jockey = col3
                     trainer = txts[4].strip() if len(txts) > 4 else ""
@@ -138,13 +133,11 @@ def parse_all_form_html_full(html_text):
                 if raw_horse_name.lower() in ["horse", "runner", "horse name", "name"]:
                     continue
 
-                # Clean Horse Name (Remove stats, numbers attached)
                 h_name_clean = re.sub(r"\s*\(.*?\)", "", raw_horse_name).strip()
-                h_name_clean = re.sub(r"^\d+\s*", "", h_name_clean).strip()
+                h_name_clean = re.sub(r"^\d+\s*", "", h_name_clean).strip().upper()
                 if not h_name_clean:
                     continue
 
-                # Extract Barrier & Weight
                 barrier = ""
                 weight = "58.0kg"
                 owner_val = ""
@@ -154,12 +147,12 @@ def parse_all_form_html_full(html_text):
                         barrier = t
                     elif re.search(r"\d{2}\.?\d?kg", t, re.I) and not weight:
                         weight = t
-                    elif len(t) > 20 and not owner_val:
+                    elif len(t) > 18 and not owner_val:
                         owner_val = t
 
                 current_horse = {
                     "no": first_col,
-                    "name": h_name_clean.upper(),
+                    "name": h_name_clean,
                     "jockey": jockey,
                     "trainer": trainer,
                     "owner": owner_val,
@@ -170,41 +163,90 @@ def parse_all_form_html_full(html_text):
                 }
                 horses.append(current_horse)
 
-            # 2. Previous Run Row
-            elif current_horse is not None and len(txts) >= 6:
-                if any(m in txts[0].lower() for m in ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec", "/"]):
-                    run_date = txts[0]
-                    run_place = txts[1] if len(txts) > 1 else ""
-                    run_type = txts[2] if len(txts) > 2 else "Race"
-                    run_pos = txts[3] if len(txts) > 3 else ""
-                    run_class = txts[4] if len(txts) > 4 else ""
-                    run_dist = txts[5] if len(txts) > 5 else "1200m"
-                    run_track = txts[6] if len(txts) > 6 else "Good4"
-                    run_barrier = txts[7] if len(txts) > 7 else "0"
-                    run_weight = txts[8] if len(txts) > 8 else "56kg"
-                    run_jockey = txts[9] if len(txts) > 9 else ""
-                    run_time = txts[10] if len(txts) > 10 else ""
+            # 2. PREVIOUS RUNS ROW (Trials, Jump Outs, Races)
+            elif current_horse is not None:
+                row_str = " ".join(txts)
+                # Check for run dates (e.g. 26Mar26, 08Apr26, 15/07/26) or Track names
+                date_match = re.search(r"(\d{1,2}[A-Za-z]{3}\d{2,4}|\d{1,2}/\d{1,2}/\d{2,4})", row_str)
+                
+                if date_match or any(k in row_str.lower() for k in ["jump out", "trial", "race", "good", "soft", "heavy", "synthetic", "firm"]):
+                    # Parse run attributes flexibly
+                    run_date = date_match.group(1) if date_match else (txts[0] if len(txts) > 0 else "")
+                    
+                    # Run Type
+                    run_type = "Race"
+                    if "jump out" in row_str.lower(): run_type = "Jump Out"
+                    elif "trial" in row_str.lower(): run_type = "Trial"
 
-                    current_horse["runs"].append({
-                        "date": run_date,
-                        "place": run_place,
-                        "type": run_type,
-                        "pos": run_pos,
-                        "class": run_class,
-                        "distance": run_dist,
-                        "track": run_track,
-                        "barrier": run_barrier,
-                        "weight": run_weight,
-                        "jockey": run_jockey,
-                        "trainer": current_horse["trainer"],
-                        "owner": current_horse["owner"],
-                        "rating": "",
-                        "p800": "",
-                        "p400": "",
-                        "split": "",
-                        "time": run_time,
-                        "odds": "000"
-                    })
+                    # Place / Venue
+                    run_place = ""
+                    place_match = re.search(r"\b([A-Z]{3,4})\b", row_str)
+                    if place_match: run_place = place_match.group(1)
+                    elif len(txts) > 1: run_place = txts[1]
+
+                    # Finishing Position (e.g., 6 of 6, 1 of 12, T 6 of 6, J 5 of 8)
+                    run_pos = ""
+                    pos_match = re.search(r"([TJ]?\s*\d{1,2}\s*of\s*\d{1,2}|\b\d{1,2}(?:st|nd|rd|th)\b)", row_str, re.I)
+                    if pos_match: run_pos = pos_match.group(1).strip()
+                    elif len(txts) > 3: run_pos = txts[3]
+
+                    # Distance (e.g., 1000m, 1200m, 750m)
+                    run_dist = ""
+                    dist_match = re.search(r"\b(\d{3,4}m)\b", row_str, re.I)
+                    if dist_match: run_dist = dist_match.group(1)
+                    elif len(txts) > 5: run_dist = txts[5]
+
+                    # Track Condition (e.g., Good4, Soft5, Heavy8, Synthetic, Firm)
+                    run_track = ""
+                    track_match = re.search(r"\b(Good\s*\d?|Soft\s*\d?|Heavy\s*\d?|Synthetic|Firm|Fast)\b", row_str, re.I)
+                    if track_match: run_track = track_match.group(1).strip()
+                    elif len(txts) > 6: run_track = txts[6]
+
+                    # Weight & Barrier
+                    run_weight = ""
+                    w_match = re.search(r"(\d{2}\.?\d?kg)", row_str, re.I)
+                    if w_match: run_weight = w_match.group(1)
+                    else: run_weight = "0kg" if run_type in ["Trial", "Jump Out"] else "56kg"
+
+                    run_barrier = "0"
+                    b_match = re.search(r"\bbarrier\s*(\d{1,2})\b", row_str, re.I)
+                    if b_match: run_barrier = b_match.group(1)
+
+                    # Time (e.g., 1:13.24, 0:47.53, 0:56.53)
+                    run_time = ""
+                    time_match = re.search(r"\b(\d{1,2}:\d{2}\.\d{2})\b", row_str)
+                    if time_match: run_time = time_match.group(1)
+                    elif len(txts) > 10: run_time = txts[10]
+
+                    # Jockey in run
+                    run_jockey = current_horse["jockey"]
+                    for t in txts:
+                        if "(a" in t.lower() or "ms " in t.lower() or "mr " in t.lower():
+                            run_jockey = t
+                            break
+
+                    # Append run if at least date or time or position is present
+                    if run_date or run_time or run_pos:
+                        current_horse["runs"].append({
+                            "date": run_date,
+                            "place": run_place,
+                            "type": run_type,
+                            "pos": run_pos,
+                            "class": "2Y-TRL" if run_type == "Trial" else ("" if run_type == "Jump Out" else "CL1"),
+                            "distance": run_dist,
+                            "track": run_track,
+                            "barrier": run_barrier,
+                            "weight": run_weight,
+                            "jockey": run_jockey,
+                            "trainer": current_horse["trainer"],
+                            "owner": current_horse["owner"],
+                            "rating": "",
+                            "p800": "",
+                            "p400": "",
+                            "split": "",
+                            "time": run_time,
+                            "odds": "000" if run_type in ["Trial", "Jump Out"] else "25"
+                        })
 
         if horses and len(horses) >= 2:
             races.append({
@@ -229,14 +271,12 @@ def generate_am_pro_step1_workbook(races):
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
 
-    # Styles
     navy_fill = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
     dark_gray_fill = PatternFill(start_color="595959", end_color="595959", fill_type="solid")
     white_bold = Font(name="Arial", size=10, bold=True, color="FFFFFF")
     regular_font = Font(name="Arial", size=9)
     bold_font = Font(name="Arial", size=9, bold=True)
     
-    # Highlights
     yellow_match_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
     green_win_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
     bold_green_font = Font(name="Arial", size=9, bold=True, color="006100")
@@ -253,7 +293,7 @@ def generate_am_pro_step1_workbook(races):
         cur_dist = race["distance"]
         cur_track = race["track_condition"]
 
-        # 1. Header Metadata (Rows 3 to 8)
+        # 1. Top Metadata (Rows 3 to 8)
         ws["A3"] = "Country"
         ws["B3"] = race["country"]
         ws["A4"] = "Place"
@@ -283,7 +323,7 @@ def generate_am_pro_step1_workbook(races):
             c.font = white_bold
             c.alignment = Alignment(horizontal="center", vertical="center")
 
-        # 3. Current Horses List
+        # 3. Current Horses Rows
         cur_row = 12
         horse_jockey_map = {}
         horse_weight_map = {}
@@ -303,7 +343,7 @@ def generate_am_pro_step1_workbook(races):
                 c.alignment = Alignment(vertical="center")
             cur_row += 1
 
-        # 4. PREVIOUS RUNS SECTION (குதிரை வாரியாக 3 வரிகள் இடைவெளியுடன்)
+        # 4. PREVIOUS RUNS SECTION (குதிரை வாரியாக இடைவெளிகளுடன்)
         r_ptr = cur_row + 3
 
         prev_headers = [
@@ -345,7 +385,7 @@ def generate_am_pro_step1_workbook(races):
                 c.alignment = Alignment(horizontal="center", vertical="center")
             r_ptr += 1
 
-            # D. All Previous Runs Rows
+            # D. ALL PREVIOUS RUNS (TRIALS, JUMP OUTS, RACES)
             runs = h.get("runs", [])
             for run in runs:
                 past_wgt_val = extract_weight_num(run.get("weight", "0"))
@@ -407,11 +447,11 @@ def generate_am_pro_step1_workbook(races):
 # STREAMLIT UI
 # =====================================================================
 
-tab1, tab2 = st.tabs(["📋 STEP 1: Paste All Form HTML (Exact AM-PRO Layout)", "📊 STEP 2: Process Edited Excel (AM Score)"])
+tab1, tab2 = st.tabs(["📋 STEP 1: Paste All Form HTML (Exact Multi-Sheet)", "📊 STEP 2: Process Edited Excel (AM Score)"])
 
 with tab1:
     st.subheader("1. Racing Australia All Form HTML-ஐ இங்கே பேஸ்ட் செய்யவும்")
-    st.caption("சரியான குதிரைப் பெயர், எண், ஜாக்கி தலைப்பு, Stats Summary மற்றும் அனைத்து முந்தைய ஓட்டங்கள் (Previous Runs) அடங்கிய எக்செல் உருவாக்கப்படும்.")
+    st.caption("குதிரையின் பெயர், அனைத்து முந்தைய ஓட்டங்கள் (Trials, Jump Outs, Races), Weight Difference மற்றும் Highlighting அடங்கிய முழுமையான எக்செல் உருவாக்கப்படும்.")
 
     html_input = st.text_area(
         "📋 Racing Australia Page Source (HTML Code):",
@@ -425,13 +465,14 @@ with tab1:
         if not cleaned:
             st.warning("⚠️ தயவுசெய்து HTML குறியீட்டை பேஸ்ட் செய்யவும்.")
         else:
-            with st.spinner("🔄 குதிரைப் பெயர்கள் மற்றும் முந்தைய ஓட்டங்கள் துல்லியமாகப் பிரித்தெடுக்கப்படுகின்றன..."):
+            with st.spinner("🔄 குதிரை விவரங்கள் மற்றும் அனைத்து முந்தைய ஓட்டங்களும் முழுமையாகப் பிரித்தெடுக்கப்படுகின்றன..."):
                 races = parse_all_form_html_full(cleaned)
                 if not races:
                     st.error("❌ HTML-லிருந்து தரவுகளைப் பிரிக்க முடியவில்லை. AllForm பக்கக் குறியீட்டை முழுமையாக பேஸ்ட் செய்துள்ளீர்களா என சரிபார்க்கவும்.")
                 else:
                     total_horses = sum(len(r["horses"]) for r in races)
-                    st.success(f"🎉 வெற்றி! {len(races)} பந்தயங்கள் (R1 முதல் R{len(races)} வரை) | {total_horses} குதிரைகளுக்கான அசல் எக்செல் உருவாக்கப்பட்டது.")
+                    total_runs = sum(sum(len(h["runs"]) for h in r["horses"]) for r in races)
+                    st.success(f"🎉 வெற்றி! {len(races)} பந்தயங்கள் | {total_horses} குதிரைகள் | {total_runs} முந்தைய ஓட்டங்கள் கண்டறியப்பட்டு எக்செல் உருவாக்கப்பட்டது.")
 
                     wb = generate_am_pro_step1_workbook(races)
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
