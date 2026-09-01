@@ -1,44 +1,50 @@
 import os
-import re
 import sys
+
+# 1. பைத்தான் கோப்புகளையும் சப்-ஃபோல்டர்களையும் தேட முழுமையான பாதையை அமைத்தல்
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+for sub_dir in ["", "scraper", "engine", "database"]:
+    target_path = os.path.join(CURRENT_DIR, sub_dir) if sub_dir else CURRENT_DIR
+    if target_path not in sys.path:
+        sys.path.insert(0, target_path)
+
 import tempfile
+import re
 import openpyxl
 import streamlit as st
 
-# பாத் சேர்ப்பது (Root directory & subfolders)
-CURRENT_DIR = os.path.abspath(os.path.dirname(__file__))
-if CURRENT_DIR not in sys.path:
-    sys.path.insert(0, CURRENT_DIR)
-
-# Scraper Import (Folder அல்லது Root இரண்டிலும் வேலை செய்யும்)
+# 2. மாட்யூல்களை தானாகக் கண்டறியும் இறக்குமதி அமைப்புகள்
 try:
     from scraper.racing_australia_scraper import RacingAustraliaScraper
-except ModuleNotFoundError:
-    from racing_australia_scraper import RacingAustraliaScraper
-
-# Engine Imports (Folder அல்லது Root இரண்டிலும் வேலை செய்யும்)
-try:
-    from engine.am_score_engine import AMScoreEngine
-except ModuleNotFoundError:
-    from am_score_engine import AMScoreEngine
-
-try:
-    from engine.excel_exporter import ExcelExporter
-except ModuleNotFoundError:
-    from excel_exporter import ExcelExporter
+except Exception:
+    try:
+        from racing_australia_scraper import RacingAustraliaScraper
+    except Exception as err:
+        RacingAustraliaScraper = None
 
 try:
     from engine.horse_history_collector import HorseHistoryCollector
-except ModuleNotFoundError:
-    from horse_history_collector import HorseHistoryCollector
+except Exception:
+    try:
+        from horse_history_collector import HorseHistoryCollector
+    except Exception as err:
+        HorseHistoryCollector = None
 
 try:
-    from database.horse_database import HorseDatabase
-except ModuleNotFoundError:
+    from engine.excel_exporter import ExcelExporter
+except Exception:
     try:
-        from horse_database import HorseDatabase
-    except ModuleNotFoundError:
-        pass
+        from excel_exporter import ExcelExporter
+    except Exception as err:
+        ExcelExporter = None
+
+try:
+    from engine.am_score_engine import AMScoreEngine
+except Exception:
+    try:
+        from am_score_engine import AMScoreEngine
+    except Exception as err:
+        AMScoreEngine = None
 
 st.set_page_config(
     page_title="AM PRO Racing Mobile",
@@ -95,6 +101,8 @@ with tab1:
         cleaned_url = input_url.strip()
         if not cleaned_url:
             st.warning("⚠️ தயவுசெய்து சரியான Racing Australia URL-ஐ உள்ளிடவும்.")
+        elif RacingAustraliaScraper is None or HorseHistoryCollector is None or ExcelExporter is None:
+            st.error("❌ Scraper/Engine மாட்யூல்கள் சரியாக லோட் ஆகவில்லை. ஃபைல் அமைப்பைச் சரிபார்க்கவும்.")
         else:
             if "AllForm.aspx" in cleaned_url:
                 all_form_url = cleaned_url
@@ -176,38 +184,41 @@ with tab2:
 
     if uploaded_file is not None:
         if st.button("⚡ Process Final Scoring & Highlights", type="primary", key="btn_step2"):
-            with st.spinner("🔄 Track, Class, Jockey அடிப்படையில் ஹைலைட் மற்றும் AM Score கணக்கிடப்படுகிறது..."):
-                try:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
-                        tmp.write(uploaded_file.read())
-                        temp_in_path = tmp.name
-
-                    wb = openpyxl.load_workbook(temp_in_path, data_only=False)
-                    AMScoreEngine.apply_am_score_and_formatting(wb)
-
-                    wb.calculation.fullCalcOnLoad = True
-                    wb.calculation.forceFullCalc = True
-                    wb.calculation.calcMode = "auto"
-                    wb.save(temp_in_path)
-
-                    with open(temp_in_path, "rb") as f:
-                        final_data = f.read()
-
+            if AMScoreEngine is None:
+                st.error("❌ AMScoreEngine மாட்யூல் சரியாக லோட் ஆகவில்லை.")
+            else:
+                with st.spinner("🔄 Track, Class, Jockey அடிப்படையில் ஹைலைட் மற்றும் AM Score கணக்கிடப்படுகிறது..."):
                     try:
-                        os.remove(temp_in_path)
-                    except Exception:
-                        pass
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+                            tmp.write(uploaded_file.read())
+                            temp_in_path = tmp.name
 
-                    base_name = os.path.splitext(uploaded_file.name)[0].replace("_STEP1_RAW", "")
-                    out_name = f"{base_name}_AM_PRO_FINAL.xlsx"
+                        wb = openpyxl.load_workbook(temp_in_path, data_only=False)
+                        AMScoreEngine.apply_am_score_and_formatting(wb)
 
-                    st.success("🎉 இறுதி பகுப்பாய்வு அறிக்கை தயார்!")
-                    st.download_button(
-                        label=f"📥 Download {out_name}",
-                        data=final_data,
-                        file_name=out_name,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
-                except Exception as e:
-                    st.error(f"Error: {str(e)}")
+                        wb.calculation.fullCalcOnLoad = True
+                        wb.calculation.forceFullCalc = True
+                        wb.calculation.calcMode = "auto"
+                        wb.save(temp_in_path)
+
+                        with open(temp_in_path, "rb") as f:
+                            final_data = f.read()
+
+                        try:
+                            os.remove(temp_in_path)
+                        except Exception:
+                            pass
+
+                        base_name = os.path.splitext(uploaded_file.name)[0].replace("_STEP1_RAW", "")
+                        out_name = f"{base_name}_AM_PRO_FINAL.xlsx"
+
+                        st.success("🎉 இறுதி பகுப்பாய்வு அறிக்கை தயார்!")
+                        st.download_button(
+                            label=f"📥 Download {out_name}",
+                            data=final_data,
+                            file_name=out_name,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
+                        )
+                    except Exception as e:
+                        st.error(f"Error: {str(e)}")
