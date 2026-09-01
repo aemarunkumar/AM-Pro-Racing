@@ -40,7 +40,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown("<div class='main-title'>🏇 AM PRO Racing System</div>", unsafe_allow_html=True)
-st.markdown("<div class='sub-title'>Step 1: All Form HTML to Exact AM-PRO Multi-Sheet (With All Previous Runs)</div>", unsafe_allow_html=True)
+st.markdown("<div class='sub-title'>Step 1: All Form to Multi-Sheet Matrix (Standard Widths, Same Barrier & Calculated Time)</div>", unsafe_allow_html=True)
 
 # =====================================================================
 # HELPER & CLEANING FUNCTIONS
@@ -71,15 +71,35 @@ def normalize_track(t_str):
     if "firm" in t_clean: return "firm"
     return t_clean
 
+def parse_time_to_seconds(t_str):
+    if not t_str or not isinstance(t_str, str):
+        return 0.0
+    t_str = t_str.strip()
+    try:
+        if ":" in t_str:
+            p = t_str.split(":")
+            return (float(p[0]) * 60.0) + float(p[1])
+        return float(t_str)
+    except Exception:
+        return 0.0
+
+def format_seconds_to_time(secs):
+    if not secs or secs <= 0:
+        return ""
+    m = int(secs // 60)
+    s = secs % 60
+    if m > 0:
+        return f"{m}:{s:05.2f}"
+    return f"0:{s:05.2f}"
+
 # =====================================================================
-# TARGETED RACING AUSTRALIA ALL FORM PARSER
+# RACING AUSTRALIA ALL FORM PARSER
 # =====================================================================
 
 def parse_racing_australia_html(html_text):
     soup = BeautifulSoup(html_text, "html.parser")
     races = []
 
-    # 1. Meeting Venue, Date, Track Info
     meeting_venue = "Warwick Farm"
     meeting_country = "NSW"
     meeting_date = "02/09/2026"
@@ -93,15 +113,12 @@ def parse_racing_australia_html(html_text):
         if date_span:
             meeting_date = date_span.get_text().strip()
 
-    # 2. Iterate through each race block (Race 1, Race 2, etc.)
-    # We can split by race title anchors <a name="Race1"></a> or <table class="race-title">
     race_titles = soup.find_all("table", class_="race-title")
 
     for idx, r_title_table in enumerate(race_titles, start=1):
         race_num_str = f"Race {idx}"
         sheet_name_str = f"R{idx}"
 
-        # Extract Distance, Class, Track Condition for this race
         title_text = r_title_table.get_text()
         dist_match = re.search(r"\((\d{3,4})\s*METRES\)", title_text, re.I)
         race_dist = f"{dist_match.group(1)}m" if dist_match else "1200m"
@@ -109,7 +126,6 @@ def parse_racing_australia_html(html_text):
         class_match = re.search(r"\b(BenchMark\s*\d+|BM\s*\d+|Maiden|MDN|Open|Handicap|Listed|G[1-3])\b", title_text, re.I)
         race_class = class_match.group(1) if class_match else "Handicap"
 
-        # Find the fields table immediately following this race title
         fields_table = r_title_table.find_next("table", class_="race-strip-fields")
         current_horses_map = {}
 
@@ -144,27 +160,10 @@ def parse_racing_australia_html(html_text):
                         "runs": []
                     }
 
-        # Find all horse-form-tables up to the next race-title
-        curr_node = r_title_table.find_next_sibling()
         race_horses_list = []
-
-        # Collect horse detail sections
-        # We search inside all horse-form-table elements belonging to this race
-        next_race_table = race_titles[idx] if idx < len(race_titles) else None
-        
-        # Extract all horse-form-tables in the entire document matching current race
         all_horse_forms = soup.find_all("table", class_="horse-form-table")
-        
-        for h_form in all_horse_forms:
-            # Check if this form belongs to current race by position
-            if next_race_table and h_form.sourceline and next_race_table.sourceline:
-                if h_form.sourceline > next_race_table.sourceline:
-                    continue
-            if r_title_table.sourceline and h_form.sourceline:
-                if h_form.sourceline < r_title_table.sourceline:
-                    continue
 
-            # If scratched, skip
+        for h_form in all_horse_forms:
             if h_form.find("td", class_="Scratched"):
                 continue
 
@@ -178,20 +177,11 @@ def parse_racing_australia_html(html_text):
             h_clean_name = re.sub(r"\s*\(.*?\)", "", raw_h_name).strip().upper()
             h_num = h_no_tag.get_text(strip=True) if h_no_tag else ""
 
-            # Match with current horse data
-            h_obj = current_horses_map.get(h_clean_name, {
-                "no": h_num,
-                "name": h_clean_name,
-                "jockey": "",
-                "trainer": "",
-                "owner": "",
-                "barrier": "",
-                "final_weight": "58.0kg",
-                "stats": "",
-                "runs": []
-            })
+            if h_clean_name not in current_horses_map:
+                continue
 
-            # Extract Stats Record line (Track, Dist, Good, Soft, Heavy, etc.)
+            h_obj = current_horses_map[h_clean_name]
+
             form_text = h_form.get_text(separator=" ", strip=True)
             stats_dict = {}
             for stat_key in ["1st Up", "2nd Up", "Track", "Dist", "Track/Dist", "Firm", "Good", "Soft", "Heavy", "Synthetic"]:
@@ -211,12 +201,10 @@ def parse_racing_australia_html(html_text):
                 stats_dict.get("Synthetic", "0:0-0-0")
             ])
 
-            # Owner
             owner_m = re.search(r"Owners:\s*(.*?)(?:Colours:|Gear Changes:|<br|$)", form_text)
             if owner_m and not h_obj["owner"]:
                 h_obj["owner"] = owner_m.group(1).strip()
 
-            # EXTRACT ALL PREVIOUS RUNS FROM <table class="horse-last-start">
             last_start_tbl = h_form.find("table", class_="horse-last-start")
             if last_start_tbl:
                 for r_tr in last_start_tbl.find_all("tr"):
@@ -229,14 +217,12 @@ def parse_racing_australia_html(html_text):
                     pos_val = pos_td.get_text(separator=" ", strip=True) if pos_td else ""
                     rem_text = remain_td.get_text(separator=" ", strip=True)
 
-                    # Run Type
                     run_type = "Race"
                     if "Jump Out" in rem_text or pos_val.startswith("J"):
                         run_type = "Jump Out"
                     elif "-BT" in rem_text or "-TRL" in rem_text or pos_val.startswith("T"):
                         run_type = "Trial"
 
-                    # Venue & Date (e.g. W FM 19Aug26)
                     venue_date_m = re.search(r"^([A-Z\s.]+?)\s+(\d{1,2}[A-Za-z]{3}\d{2,4})", rem_text)
                     if venue_date_m:
                         p_place = venue_date_m.group(1).strip()
@@ -245,47 +231,60 @@ def parse_racing_australia_html(html_text):
                         p_place = ""
                         p_date = ""
 
-                    # Distance
                     d_m = re.search(r"\b(\d{3,4}m)\b", rem_text)
                     p_dist = d_m.group(1) if d_m else ""
 
-                    # Track Condition
                     tr_m = re.search(r"\b(Good\s*\d?|Soft\s*\d?|Heavy\s*\d?|Synthetic|Firm\s*\d?|Fast)\b", rem_text, re.I)
                     p_track = tr_m.group(1) if tr_m else "Good4"
 
-                    # Class
                     cl_m = re.search(r"\b(BM\d+|MDN-SW|2Y-BT|OPEN-BT|2Y\s+MDN|3Y\s+MDN|SUPER\s+3Y\s+MDN|2YF-BT|2YC&G-BT|3Y\+MDN-BT|CL\d+|LR|G[1-3])\b", rem_text, re.I)
                     p_class = cl_m.group(1) if cl_m else ("Trial" if run_type == "Trial" else "")
 
-                    # Weight
                     w_m = re.search(r"\b(\d{2}(?:\.\d)?kg)\b", rem_text, re.I)
                     p_weight = w_m.group(1) if w_m else ("0kg" if run_type in ["Trial", "Jump Out"] else "56kg")
 
-                    # Barrier
                     bar_m = re.search(r"Barrier\s*(\d{1,2})", rem_text, re.I)
                     p_barrier = bar_m.group(1) if bar_m else "0"
 
-                    # Past Jockey
                     jock_tag = remain_td.find("a", href=re.compile(r"JockeyLastRuns", re.I))
                     p_jockey = jock_tag.get_text(strip=True) if jock_tag else ""
 
-                    # Finishing Time
                     time_m = re.search(r"\b(\d{1,2}:\d{2}\.\d{2})\b", rem_text)
                     p_time = time_m.group(1) if time_m else ""
 
-                    # Splits & Positions
                     p800_m = re.search(r"(\d{1,2}(?:st|nd|rd|th)@800m)", rem_text)
                     p400_m = re.search(r"(\d{1,2}(?:st|nd|rd|th)@400m)", rem_text)
                     p_800 = p800_m.group(1) if p800_m else ""
                     p_400 = p400_m.group(1) if p400_m else ""
 
-                    # Split 600m
                     split_m = re.search(r"\(600m\s*([\d.]+)\)", rem_text)
                     p_split = split_m.group(1) if split_m else ""
 
-                    # Odds
                     odds_m = re.search(r"(\$[\d/.]+[Ff]?)$", rem_text)
                     p_odds = odds_m.group(1) if odds_m else ("$000" if run_type in ["Trial", "Jump Out"] else "")
+
+                    # Column T: Adjusted Calculated Time Calculation
+                    calc_time_val = ""
+                    if p_time and p_dist:
+                        try:
+                            past_dist_num = float(re.sub(r"\D", "", p_dist))
+                            curr_dist_num = float(re.sub(r"\D", "", race_dist))
+                            base_secs = parse_time_to_seconds(p_time)
+
+                            if past_dist_num > 0 and base_secs > 0:
+                                # Normalizing to current race distance
+                                scaled_secs = base_secs * (curr_dist_num / past_dist_num)
+                                
+                                # Weight Difference adjustment (0.15s per 1kg diff)
+                                cur_w_num = extract_weight_num(h_obj["final_weight"])
+                                past_w_num = extract_weight_num(p_weight)
+                                if cur_w_num and past_w_num:
+                                    w_diff = cur_w_num - past_w_num
+                                    scaled_secs += (w_diff * 0.15)
+                                
+                                calc_time_val = format_seconds_to_time(scaled_secs)
+                        except Exception:
+                            calc_time_val = ""
 
                     h_obj["runs"].append({
                         "date": p_date,
@@ -305,7 +304,8 @@ def parse_racing_australia_html(html_text):
                         "p400": p_400,
                         "split": p_split,
                         "time": p_time,
-                        "odds": p_odds
+                        "odds": p_odds,
+                        "calc_time": calc_time_val
                     })
 
             race_horses_list.append(h_obj)
@@ -325,7 +325,7 @@ def parse_racing_australia_html(html_text):
     return races
 
 # =====================================================================
-# EXACT MULTI-SHEET EXCEL BUILDER (MATCHING USER TEMPLATE)
+# EXACT MULTI-SHEET EXCEL BUILDER (FIXED WIDTHS & SAME BARRIER HIGHLIGHT)
 # =====================================================================
 
 def generate_am_pro_step1_workbook(races):
@@ -354,7 +354,7 @@ def generate_am_pro_step1_workbook(races):
         cur_dist = race["distance"]
         cur_track = race["track_condition"]
 
-        # 1. Top Metadata (Rows 3 to 8)
+        # 1. Top Metadata
         ws["A3"] = "Country"
         ws["B3"] = race["country"]
         ws["A4"] = "Place"
@@ -385,14 +385,15 @@ def generate_am_pro_step1_workbook(races):
             c.font = white_bold
             c.alignment = Alignment(horizontal="center", vertical="center")
 
-        # 3. Current Horses Rows
         cur_row = 12
         horse_jockey_map = {}
         horse_weight_map = {}
+        horse_barrier_map = {}
 
         for h in race["horses"]:
             horse_jockey_map[h["name"].lower()] = clean_jockey_name(h["jockey"])
             horse_weight_map[h["name"].lower()] = extract_weight_num(h["final_weight"])
+            horse_barrier_map[h["name"].lower()] = str(h["barrier"]).strip()
 
             ws.append([
                 h["no"], h["name"], h["jockey"], h["trainer"], h["owner"],
@@ -405,7 +406,7 @@ def generate_am_pro_step1_workbook(races):
                 c.alignment = Alignment(vertical="center")
             cur_row += 1
 
-        # 4. PREVIOUS RUNS SECTION (குதிரை வாரியாக 3 வரிகள் இடைவெளியுடன்)
+        # 3. Previous Runs Section
         r_ptr = cur_row + 3
 
         prev_headers = [
@@ -418,8 +419,9 @@ def generate_am_pro_step1_workbook(races):
             h_key = h["name"].lower()
             cur_jockey_clean = horse_jockey_map.get(h_key, "")
             cur_wgt_val = horse_weight_map.get(h_key, 0.0)
+            cur_barrier_val = horse_barrier_map.get(h_key, "")
 
-            # A. Horse Header Row (Column A: Name, Column C: No, Column D: Jockey)
+            # A. Horse Header Row
             ws.cell(row=r_ptr, column=1, value=h["name"]).font = bold_font
             ws.cell(row=r_ptr, column=3, value=h["no"]).font = bold_font
             ws.cell(row=r_ptr, column=4, value=h["jockey"]).font = bold_font
@@ -461,7 +463,7 @@ def generate_am_pro_step1_workbook(races):
                     run.get("jockey", ""), h["trainer"], h["owner"],
                     "", run.get("p800", ""), run.get("p400", ""), run.get("split", ""),
                     run.get("time", ""), run.get("odds", "$000"),
-                    f"=IF(R{r_ptr}>0, R{r_ptr}, \"\")"
+                    run.get("calc_time", "")
                 ]
                 ws.append(row_vals)
 
@@ -485,23 +487,32 @@ def generate_am_pro_step1_workbook(races):
                 if normalize_track(run.get("track", "")) == normalize_track(cur_track):
                     ws.cell(row=r_ptr, column=7).fill = yellow_match_fill
 
-                # 4. Same Jockey (with Allowance match) -> Yellow
+                # 4. Same Barrier Match -> Yellow Highlight
+                past_barrier_val = str(run.get("barrier", "")).strip()
+                if cur_barrier_val and past_barrier_val and (cur_barrier_val == past_barrier_val) and past_barrier_val != "0":
+                    ws.cell(row=r_ptr, column=8).fill = yellow_match_fill
+
+                # 5. Same Jockey (with Allowance match) -> Yellow
                 past_jockey_clean = clean_jockey_name(run.get("jockey", ""))
                 if cur_jockey_clean and past_jockey_clean and (cur_jockey_clean in past_jockey_clean or past_jockey_clean in cur_jockey_clean):
                     ws.cell(row=r_ptr, column=11).fill = yellow_match_fill
 
                 r_ptr += 1
 
-            # E. அடுத்த குதிரைக்கு முன் 3 வரிசைகள் இடைவெளி
             r_ptr += 3
             ws.append([])
             ws.append([])
             ws.append([])
 
-        for col in ws.columns:
-            col_letter = openpyxl.utils.get_column_letter(col[0].column)
-            max_l = max(len(str(c.value or '')) for c in col)
-            ws.column_dimensions[col_letter].width = max(max_l + 3, 13)
+        # Standard Column Widths (Fixed Compact Widths - Owner Name capped at 20)
+        standard_widths = {
+            "A": 12, "B": 12, "C": 12, "D": 14, "E": 14,
+            "F": 10, "G": 12, "H": 10, "I": 12, "J": 12,
+            "K": 14, "L": 14, "M": 20, "N": 10, "O": 12,
+            "P": 12, "Q": 12, "R": 14, "S": 12, "T": 14
+        }
+        for col_letter, w in standard_widths.items():
+            ws.column_dimensions[col_letter].width = w
 
     return wb
 
@@ -513,7 +524,7 @@ tab1, tab2 = st.tabs(["📋 STEP 1: Paste All Form HTML (Exact Multi-Sheet)", "�
 
 with tab1:
     st.subheader("1. Racing Australia All Form HTML-ஐ இங்கே பேஸ்ட் செய்யவும்")
-    st.caption("குதிரை வாரியான அட்டவணை, Stats Summary மற்றும் அனைத்து Previous Runs (Trials, Jump Outs, Races) அடங்கிய முழுமையான எக்செல் உருவாக்கப்படும்.")
+    st.caption("Standard Column Widths, Same Barrier Highlighting மற்றும் சரியான Calculated Time (Col T) உடன் கூடிய எக்செல் உருவாக்கப்படும்.")
 
     html_input = st.text_area(
         "📋 Racing Australia Page Source (HTML Code):",
@@ -527,14 +538,14 @@ with tab1:
         if not cleaned:
             st.warning("⚠️ தயவுசெய்து HTML குறியீட்டை பேஸ்ட் செய்யவும்.")
         else:
-            with st.spinner("🔄 HTML-லிருந்து குதிரைகள் மற்றும் அனைத்து முந்தைய ஓட்டங்கள் பிரித்தெடுக்கப்படுகின்றன..."):
+            with st.spinner("🔄 குதிரைகள், முந்தைய ஓட்டங்கள் மற்றும் கால்குலேட்டட் டைம் கணக்கிடப்படுகின்றன..."):
                 races = parse_racing_australia_html(cleaned)
                 if not races:
                     st.error("❌ HTML-லிருந்து தரவுகளைப் பிரிக்க முடியவில்லை. AllForm பக்கக் குறியீட்டை முழுமையாக பேஸ்ட் செய்துள்ளீர்களா என சரிபார்க்கவும்.")
                 else:
                     total_horses = sum(len(r["horses"]) for r in races)
                     total_runs = sum(sum(len(h["runs"]) for h in r["horses"]) for r in races)
-                    st.success(f"🎉 வெற்றி! {len(races)} பந்தயங்கள் | {total_horses} குதிரைகள் | {total_runs} முந்தைய ஓட்டங்கள் (Previous Runs) கண்டறியப்பட்டு எக்செல் உருவாக்கப்பட்டது.")
+                    st.success(f"🎉 வெற்றி! {len(races)} பந்தயங்கள் | {total_horses} குதிரைகள் | {total_runs} முந்தைய ஓட்டங்கள் கண்டறியப்பட்டு எக்செல் உருவாக்கப்பட்டது.")
 
                     wb = generate_am_pro_step1_workbook(races)
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
