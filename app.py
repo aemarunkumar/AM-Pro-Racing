@@ -40,7 +40,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown("<div class='main-title'>🏇 AM PRO Racing System</div>", unsafe_allow_html=True)
-st.markdown("<div class='sub-title'>Step 1: All Form to Multi-Sheet Matrix (Standard Widths, Same Barrier & Calculated Time)</div>", unsafe_allow_html=True)
+st.markdown("<div class='sub-title'>Step 1: All Form to Multi-Sheet Matrix | Step 2: AM Final Score</div>", unsafe_allow_html=True)
 
 # =====================================================================
 # HELPER & CLEANING FUNCTIONS
@@ -92,6 +92,11 @@ def format_seconds_to_time(secs):
         return f"{m}:{s:05.2f}"
     return f"0:{s:05.2f}"
 
+def clean_filename(name):
+    clean = re.sub(r'[\\/*?:"<>|]', "", name)
+    clean = clean.replace("%20", " ").strip()
+    return clean
+
 # =====================================================================
 # RACING AUSTRALIA ALL FORM PARSER
 # =====================================================================
@@ -102,8 +107,9 @@ def parse_racing_australia_html(html_text):
 
     meeting_venue = "Warwick Farm"
     meeting_country = "NSW"
-    meeting_date = "02/09/2026"
+    date_formatted = "02Sep2026"
 
+    # Venue & Date Extraction
     venue_elem = soup.find("div", class_="race-venue")
     if venue_elem:
         h2 = venue_elem.find("h2")
@@ -111,7 +117,19 @@ def parse_racing_australia_html(html_text):
             meeting_venue = h2.get_text().split(":")[0].strip()
         date_span = venue_elem.find("span", class_="race-venue-date")
         if date_span:
-            meeting_date = date_span.get_text().strip()
+            meeting_date_raw = date_span.get_text().strip()
+            # Convert 'Wednesday, 02 September 2026' -> '02Sep2026'
+            d_match = re.search(r"(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})", meeting_date_raw)
+            if d_match:
+                day, month, year = d_match.groups()
+                date_formatted = f"{int(day):02d}{month[:3]}{year}"
+
+    banner = soup.find("div", class_="state-specific-banner")
+    if banner and banner.find("img"):
+        alt_txt = banner.find("img").get("alt", "")
+        m_state = re.search(r"\b(NSW|VIC|QLD|WA|SA|TAS|ACT|NT)\b", alt_txt, re.I)
+        if m_state:
+            meeting_country = m_state.group(1).upper()
 
     race_titles = soup.find_all("table", class_="race-title")
 
@@ -272,16 +290,12 @@ def parse_racing_australia_html(html_text):
                             base_secs = parse_time_to_seconds(p_time)
 
                             if past_dist_num > 0 and base_secs > 0:
-                                # Normalizing to current race distance
                                 scaled_secs = base_secs * (curr_dist_num / past_dist_num)
-                                
-                                # Weight Difference adjustment (0.15s per 1kg diff)
                                 cur_w_num = extract_weight_num(h_obj["final_weight"])
                                 past_w_num = extract_weight_num(p_weight)
                                 if cur_w_num and past_w_num:
                                     w_diff = cur_w_num - past_w_num
                                     scaled_secs += (w_diff * 0.15)
-                                
                                 calc_time_val = format_seconds_to_time(scaled_secs)
                         except Exception:
                             calc_time_val = ""
@@ -319,13 +333,14 @@ def parse_racing_australia_html(html_text):
                 "track_condition": "Good 4",
                 "class_name": race_class,
                 "place": meeting_venue,
+                "date_formatted": date_formatted,
                 "horses": race_horses_list
             })
 
     return races
 
 # =====================================================================
-# EXACT MULTI-SHEET EXCEL BUILDER (FIXED WIDTHS & SAME BARRIER HIGHLIGHT)
+# EXACT MULTI-SHEET EXCEL BUILDER
 # =====================================================================
 
 def generate_am_pro_step1_workbook(races):
@@ -354,7 +369,7 @@ def generate_am_pro_step1_workbook(races):
         cur_dist = race["distance"]
         cur_track = race["track_condition"]
 
-        # 1. Top Metadata
+        # 1. Top Metadata (B4 Cell contains the Venue/Place Name)
         ws["A3"] = "Country"
         ws["B3"] = race["country"]
         ws["A4"] = "Place"
@@ -487,12 +502,12 @@ def generate_am_pro_step1_workbook(races):
                 if normalize_track(run.get("track", "")) == normalize_track(cur_track):
                     ws.cell(row=r_ptr, column=7).fill = yellow_match_fill
 
-                # 4. Same Barrier Match -> Yellow Highlight
+                # 4. Same Barrier Match -> Yellow
                 past_barrier_val = str(run.get("barrier", "")).strip()
                 if cur_barrier_val and past_barrier_val and (cur_barrier_val == past_barrier_val) and past_barrier_val != "0":
                     ws.cell(row=r_ptr, column=8).fill = yellow_match_fill
 
-                # 5. Same Jockey (with Allowance match) -> Yellow
+                # 5. Same Jockey -> Yellow
                 past_jockey_clean = clean_jockey_name(run.get("jockey", ""))
                 if cur_jockey_clean and past_jockey_clean and (cur_jockey_clean in past_jockey_clean or past_jockey_clean in cur_jockey_clean):
                     ws.cell(row=r_ptr, column=11).fill = yellow_match_fill
@@ -504,7 +519,7 @@ def generate_am_pro_step1_workbook(races):
             ws.append([])
             ws.append([])
 
-        # Standard Column Widths (Fixed Compact Widths - Owner Name capped at 20)
+        # Standard Column Widths
         standard_widths = {
             "A": 12, "B": 12, "C": 12, "D": 14, "E": 14,
             "F": 10, "G": 12, "H": 10, "I": 12, "J": 12,
@@ -524,7 +539,7 @@ tab1, tab2 = st.tabs(["📋 STEP 1: Paste All Form HTML (Exact Multi-Sheet)", "�
 
 with tab1:
     st.subheader("1. Racing Australia All Form HTML-ஐ இங்கே பேஸ்ட் செய்யவும்")
-    st.caption("Standard Column Widths, Same Barrier Highlighting மற்றும் சரியான Calculated Time (Col T) உடன் கூடிய எக்செல் உருவாக்கப்படும்.")
+    st.caption("Excel கோப்பின் பெயர் [Date]_[Venue/Place].xlsx என சேமிக்கப்படும்.")
 
     html_input = st.text_area(
         "📋 Racing Australia Page Source (HTML Code):",
@@ -538,13 +553,21 @@ with tab1:
         if not cleaned:
             st.warning("⚠️ தயவுசெய்து HTML குறியீட்டை பேஸ்ட் செய்யவும்.")
         else:
-            with st.spinner("🔄 குதிரைகள், முந்தைய ஓட்டங்கள் மற்றும் கால்குலேட்டட் டைம் கணக்கிடப்படுகின்றன..."):
+            with st.spinner("🔄 HTML-லிருந்து தரவுகள் பெறப்பட்டு எக்செல் உருவாக்கப்படுகிறது..."):
                 races = parse_racing_australia_html(cleaned)
                 if not races:
                     st.error("❌ HTML-லிருந்து தரவுகளைப் பிரிக்க முடியவில்லை. AllForm பக்கக் குறியீட்டை முழுமையாக பேஸ்ட் செய்துள்ளீர்களா என சரிபார்க்கவும்.")
                 else:
                     total_horses = sum(len(r["horses"]) for r in races)
                     total_runs = sum(sum(len(h["runs"]) for h in r["horses"]) for r in races)
+                    
+                    # 1. Date, 2. Venue/Place from B4
+                    date_prefix = races[0].get("date_formatted", "02Sep2026")
+                    b4_place = clean_filename(races[0]["place"])
+                    
+                    # Exact File Name Format: Date_Venue.xlsx (No _STEP1_RAW)
+                    out_filename = f"{date_prefix}_{b4_place}.xlsx"
+
                     st.success(f"🎉 வெற்றி! {len(races)} பந்தயங்கள் | {total_horses} குதிரைகள் | {total_runs} முந்தைய ஓட்டங்கள் கண்டறியப்பட்டு எக்செல் உருவாக்கப்பட்டது.")
 
                     wb = generate_am_pro_step1_workbook(races)
@@ -560,11 +583,10 @@ with tab1:
                     except Exception:
                         pass
 
-                    out_name = "AM_PRO_RACING_STEP1_RAW.xlsx"
                     st.download_button(
-                        label=f"📥 Download Multi-Sheet Excel ({out_name})",
+                        label=f"📥 Download ({out_filename})",
                         data=excel_data,
-                        file_name=out_name,
+                        file_name=out_filename,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         use_container_width=True
                     )
