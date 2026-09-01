@@ -6,19 +6,6 @@ from bs4 import BeautifulSoup
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 
-# Cloudflare Bypass Libraries
-try:
-    from curl_cffi import requests as cureq
-except ImportError:
-    cureq = None
-
-try:
-    import cloudscraper
-except ImportError:
-    cloudscraper = None
-
-import requests
-
 st.set_page_config(
     page_title="AM PRO Racing Mobile",
     page_icon="🏇",
@@ -53,50 +40,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown("<div class='main-title'>🏇 AM PRO Racing System</div>", unsafe_allow_html=True)
-st.markdown("<div class='sub-title'>Step 1: Scrape / Parse to Excel (Col T) | Step 2: Final AM Score & Highlights</div>", unsafe_allow_html=True)
-
-# =====================================================================
-# FETCH & PARSE ENGINE
-# =====================================================================
-
-def fetch_bypassed_html(url):
-    target_url = url.strip()
-    if "racingaustralia.horse" in target_url and "www.racingaustralia.horse" not in target_url:
-        target_url = target_url.replace("racingaustralia.horse", "www.racingaustralia.horse")
-
-    # Strategy A: curl_cffi Chrome Impersonate (Best for Cloudflare TLS 403)
-    if cureq is not None:
-        try:
-            r = cureq.get(
-                target_url,
-                impersonate="chrome124",
-                timeout=30,
-                headers={"Referer": "https://www.racingaustralia.horse/"}
-            )
-            if r.status_code == 200 and len(r.text) > 1000:
-                return r.text, 200, "curl_cffi"
-        except Exception:
-            pass
-
-    # Strategy B: Cloudscraper
-    if cloudscraper is not None:
-        try:
-            scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True})
-            r = scraper.get(target_url, timeout=30)
-            if r.status_code == 200 and len(r.text) > 1000:
-                return r.text, 200, "cloudscraper"
-        except Exception:
-            pass
-
-    # Strategy C: Requests with Real Browser Headers
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://www.racingaustralia.horse/"
-    }
-    r = requests.get(target_url, headers=headers, timeout=30)
-    return r.text, r.status_code, "requests"
+st.markdown("<div class='sub-title'>Step 1: Paste HTML Source (Col T) | Step 2: Final AM Score & Highlights</div>", unsafe_allow_html=True)
 
 def parse_racing_content(html_text):
     soup = BeautifulSoup(html_text, "html.parser")
@@ -146,7 +90,6 @@ def parse_racing_content(html_text):
             })
             current_race_idx += 1
 
-    # Fallback to Horse links if tables were nested
     if not races:
         horse_links = soup.find_all("a", href=re.compile(r"Horse\.aspx", re.I))
         if horse_links:
@@ -243,86 +186,52 @@ def apply_am_scoring_step2(wb):
 # UI TABS
 # =====================================================================
 
-tab1, tab2 = st.tabs(["🌐 STEP 1: Scrape URL / Paste HTML (Col T)", "📊 STEP 2: Process Edited Excel (AM Score)"])
+tab1, tab2 = st.tabs(["📋 STEP 1: Paste HTML Source (Col T)", "📊 STEP 2: Process Edited Excel (AM Score)"])
 
 with tab1:
-    st.subheader("1. Racing Australia தரவிலிருந்து Excel உருவாக்குதல்")
-    
-    input_method = st.radio(
-        "உள்ளீட்டு முறையைத் தேர்ந்தெடுக்கவும் (Input Method):",
-        ["🔗 Online URL Scraper", "📋 Direct Page Source Paste (100% Guaranteed Bypass)"],
-        horizontal=True
+    st.subheader("1. Racing Australia HTML குறியீட்டை இங்கே பேஸ்ட் செய்யவும்")
+    st.caption("பிரவுசரில் Ctrl + U கொடுத்து காப்பி செய்த முழு HTML-ஐ கீழே உள்ள பெரிய பெட்டியில் பேஸ்ட் செய்யவும்.")
+
+    html_input = st.text_area(
+        "📋 Racing Australia Page Source (HTML):",
+        height=250,
+        placeholder="<!DOCTYPE html><html>... (Ctrl + V செய்து இங்கே பேஸ்ட் செய்யவும்)",
+        key="direct_html_input"
     )
 
-    races_found = []
-    file_key = "RACING_DATA"
+    if st.button("🚀 Process HTML & Generate Step 1 Excel", type="primary", key="btn_html_gen"):
+        cleaned_html = html_input.strip()
+        if not cleaned_html:
+            st.warning("⚠️ தயவுசெய்து HTML குறியீட்டை மேலே உள்ள பெட்டியில் பேஸ்ட் செய்யவும்.")
+        else:
+            with st.spinner("🔄 HTML-லிருந்து பந்தய மற்றும் குதிரை விவரங்கள் பிரித்தெடுக்கப்படுகின்றன..."):
+                races = parse_racing_content(cleaned_html)
+                if not races:
+                    st.error("❌ HTML-ல் இருந்து பந்தய விவரங்களை எடுக்க முடியவில்லை. பக்கத்தின் முழு HTML-ஐயும் காப்பி செய்துள்ளீர்களா என சரிபார்க்கவும்.")
+                else:
+                    total_horses = sum(len(r["horses"]) for r in races)
+                    st.success(f"🎉 வெற்றி! {len(races)} பந்தயங்கள் மற்றும் {total_horses} குதிரைகள் கண்டறியப்பட்டன.")
 
-    if input_method == "🔗 Online URL Scraper":
-        input_url = st.text_input(
-            "Racing Australia All Form URL:",
-            placeholder="https://www.racingaustralia.horse/FreeFields/AllForm.aspx?Key=...",
-            key="tab1_url"
-        )
-        if st.button("🚀 Scrape & Download Step 1 Excel", type="primary", key="btn_url"):
-            if not input_url.strip():
-                st.warning("⚠️ தயவுசெய்து சரியான URL-ஐ உள்ளிடவும்.")
-            else:
-                status_box = st.status("🔄 பந்தய தகவல்கள் பெறப்படுகின்றன...", expanded=True)
-                try:
-                    status_box.write("🌐 Cloudflare பைபாஸ் மூலம் இணையதளம் அணுகப்படுகிறது...")
-                    html_text, status_code, method_used = fetch_bypassed_html(input_url.strip())
-                    
-                    if status_code != 200 or len(html_text) < 1000:
-                        status_box.update(label="❌ Cloudflare தடுப்பு (403)! 'Direct Page Source Paste' முறையைப் பயன்படுத்தவும்.", state="error")
-                        st.error("Racing Australia சர்வர் Cloud IP-ஐ தடுத்துள்ளது. மேலே உள்ள 'Direct Page Source Paste' ஆப்ஷனைப் பயன்படுத்தி 1 விநாடியில் எக்செல் பெறலாம்.")
-                    else:
-                        status_box.write("📋 குதிரை மற்றும் பந்தய விவரங்கள் தொகுக்கப்படுகின்றன...")
-                        races_found = parse_racing_content(html_text)
-                        match = re.search(r"Key=([^&#]+)", input_url)
-                        if match:
-                            file_key = match.group(1).replace("%2C", "_")
-                        status_box.update(label="🎉 பந்தய விவரங்கள் பெறப்பட்டன!", state="complete", expanded=False)
-                except Exception as e:
-                    status_box.update(label="❌ பிழை ஏற்பட்டது!", state="error")
-                    st.error(f"Error: {str(e)}")
+                    wb = build_excel_workbook(races)
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+                        temp_path = tmp.name
+                    wb.save(temp_path)
 
-    else:
-        st.info("💡 **எளிய முறை:** பிரவுசரில் Racing Australia பக்கத்தில் **Ctrl + U** கொடுத்து, அனைத்தையும் காப்பி செய்து கீழே பேஸ்ட் செய்யவும்.")
-        html_input = st.text_area("Racing Australia Page Source (HTML Code):", height=200, key="tab1_html")
-        
-        if st.button("🚀 Process HTML & Download Step 1 Excel", type="primary", key="btn_html"):
-            if not html_input.strip():
-                st.warning("⚠️ தயவுசெய்து HTML குறியீட்டை பேஸ்ட் செய்யவும்.")
-            else:
-                with st.spinner("🔄 HTML-லிருந்து தரவுகள் பிரித்தெடுக்கப்படுகின்றன..."):
-                    races_found = parse_racing_content(html_input)
+                    with open(temp_path, "rb") as f:
+                        excel_data = f.read()
 
-    # Excel Download Block
-    if races_found:
-        total_horses = sum(len(r["horses"]) for r in races_found)
-        st.success(f"✅ {len(races_found)} பந்தயங்கள் | {total_horses} குதிரைகள் கண்டறியப்பட்டன!")
-        
-        wb = build_excel_workbook(races_found)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
-            temp_path = tmp.name
-        wb.save(temp_path)
+                    try:
+                        os.remove(temp_path)
+                    except Exception:
+                        pass
 
-        with open(temp_path, "rb") as f:
-            excel_data = f.read()
-
-        try:
-            os.remove(temp_path)
-        except Exception:
-            pass
-
-        out_name = f"{file_key}_STEP1_RAW.xlsx"
-        st.download_button(
-            label=f"📥 Download {out_name}",
-            data=excel_data,
-            file_name=out_name,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
+                    st.download_button(
+                        label="📥 Download Step 1 Excel (RACING_DATA_STEP1_RAW.xlsx)",
+                        data=excel_data,
+                        file_name="RACING_DATA_STEP1_RAW.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
 
 with tab2:
     st.subheader("2. எடிட் செய்த Excel-ஐ பதிவேற்றி Final அறிக்கை பெறுதல்")
