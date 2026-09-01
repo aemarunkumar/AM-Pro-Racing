@@ -1,13 +1,20 @@
+import os
+import sys
+
+# ரூட் டைரக்டரி மற்றும் சப்-ஃபோல்டர்களை பைத்தான் பாத்தில் சேர்த்தல்
+CURRENT_DIR = os.path.abspath(os.path.dirname(__file__))
+if CURRENT_DIR not in sys.path:
+    sys.path.insert(0, CURRENT_DIR)
+
+import openpyxl
+import re
 import streamlit as st
 import tempfile
-import os
-import re
-import openpyxl
 
-from scraper.racing_australia_scraper import RacingAustraliaScraper
-from engine.horse_history_collector import HorseHistoryCollector
-from engine.excel_exporter import ExcelExporter
 from engine.am_score_engine import AMScoreEngine
+from engine.excel_exporter import ExcelExporter
+from engine.horse_history_collector import HorseHistoryCollector
+from scraper.racing_australia_scraper import RacingAustraliaScraper
 
 st.set_page_config(
     page_title="AM PRO Racing Mobile",
@@ -65,7 +72,6 @@ with tab1:
         if not cleaned_url:
             st.warning("⚠️ தயவுசெய்து சரியான Racing Australia URL-ஐ உள்ளிடவும்.")
         else:
-            # All Form மற்றும் Meeting Form URL-களைத் தானாகவே அமைத்தல்
             if "AllForm.aspx" in cleaned_url:
                 all_form_url = cleaned_url
                 meeting_url = cleaned_url.replace("AllForm.aspx", "Form.aspx")
