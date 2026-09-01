@@ -1,20 +1,44 @@
 import os
+import re
 import sys
+import tempfile
+import openpyxl
+import streamlit as st
 
-# ரூட் டைரக்டரி மற்றும் சப்-ஃபோல்டர்களை பைத்தான் பாத்தில் சேர்த்தல்
+# பாத் சேர்ப்பது (Root directory & subfolders)
 CURRENT_DIR = os.path.abspath(os.path.dirname(__file__))
 if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
-import openpyxl
-import re
-import streamlit as st
-import tempfile
+# Scraper Import (Folder அல்லது Root இரண்டிலும் வேலை செய்யும்)
+try:
+    from scraper.racing_australia_scraper import RacingAustraliaScraper
+except ModuleNotFoundError:
+    from racing_australia_scraper import RacingAustraliaScraper
 
-from engine.am_score_engine import AMScoreEngine
-from engine.excel_exporter import ExcelExporter
-from engine.horse_history_collector import HorseHistoryCollector
-from scraper.racing_australia_scraper import RacingAustraliaScraper
+# Engine Imports (Folder அல்லது Root இரண்டிலும் வேலை செய்யும்)
+try:
+    from engine.am_score_engine import AMScoreEngine
+except ModuleNotFoundError:
+    from am_score_engine import AMScoreEngine
+
+try:
+    from engine.excel_exporter import ExcelExporter
+except ModuleNotFoundError:
+    from excel_exporter import ExcelExporter
+
+try:
+    from engine.horse_history_collector import HorseHistoryCollector
+except ModuleNotFoundError:
+    from horse_history_collector import HorseHistoryCollector
+
+try:
+    from database.horse_database import HorseDatabase
+except ModuleNotFoundError:
+    try:
+        from horse_database import HorseDatabase
+    except ModuleNotFoundError:
+        pass
 
 st.set_page_config(
     page_title="AM PRO Racing Mobile",
