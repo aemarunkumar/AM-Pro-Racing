@@ -2,60 +2,55 @@ import os
 import sys
 import tempfile
 import re
+import traceback
 import openpyxl
 import streamlit as st
 
-# 1. அனைத்து கோப்பகங்களையும் (Root & Subfolders) பைத்தான் பாத்தில் உறுதியாகச் சேர்த்தல்
+# 1. பாத் அமைத்தல்
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sub_folders = [
-    BASE_DIR,
-    os.path.join(BASE_DIR, "scraper"),
-    os.path.join(BASE_DIR, "engine"),
-    os.path.join(BASE_DIR, "database"),
-    os.path.join(BASE_DIR, "ui")
-]
+for sub_dir in ["", "scraper", "engine", "database", "ui"]:
+    p = os.path.join(BASE_DIR, sub_dir) if sub_dir else BASE_DIR
+    if os.path.exists(p) and p not in sys.path:
+        sys.path.insert(0, p)
 
-for folder in sub_folders:
-    if os.path.exists(folder) and folder not in sys.path:
-        sys.path.insert(0, folder)
-
-# 2. பிழையின்றி மாட்யூல்களை இறக்குமதி செய்தல்
-RacingAustraliaScraper = None
-HorseHistoryCollector = None
-ExcelExporter = None
-AMScoreEngine = None
+# 2. மாட்யூல்களை லோட் செய்தல் (துல்லியமான பிழைப் பதிவுகளுடன்)
+import_errors = {}
 
 try:
     from scraper.racing_australia_scraper import RacingAustraliaScraper
-except Exception:
+except Exception as e1:
     try:
         from racing_australia_scraper import RacingAustraliaScraper
-    except Exception as e:
-        print(f"Scraper import error: {e}")
+    except Exception as e2:
+        RacingAustraliaScraper = None
+        import_errors["RacingAustraliaScraper"] = f"{e1} | {e2}"
 
 try:
     from engine.horse_history_collector import HorseHistoryCollector
-except Exception:
+except Exception as e1:
     try:
         from horse_history_collector import HorseHistoryCollector
-    except Exception as e:
-        print(f"History collector import error: {e}")
+    except Exception as e2:
+        HorseHistoryCollector = None
+        import_errors["HorseHistoryCollector"] = f"{e1} | {e2}"
 
 try:
     from engine.excel_exporter import ExcelExporter
-except Exception:
+except Exception as e1:
     try:
         from excel_exporter import ExcelExporter
-    except Exception as e:
-        print(f"Excel exporter import error: {e}")
+    except Exception as e2:
+        ExcelExporter = None
+        import_errors["ExcelExporter"] = f"{e1} | {e2}"
 
 try:
     from engine.am_score_engine import AMScoreEngine
-except Exception:
+except Exception as e1:
     try:
         from am_score_engine import AMScoreEngine
-    except Exception as e:
-        print(f"AMScoreEngine import error: {e}")
+    except Exception as e2:
+        AMScoreEngine = None
+        import_errors["AMScoreEngine"] = f"{e1} | {e2}"
 
 st.set_page_config(
     page_title="AM PRO Racing Mobile",
@@ -113,7 +108,9 @@ with tab1:
         if not cleaned_url:
             st.warning("⚠️ தயவுசெய்து சரியான Racing Australia URL-ஐ உள்ளிடவும்.")
         elif RacingAustraliaScraper is None or HorseHistoryCollector is None or ExcelExporter is None:
-            st.error("❌ Scraper/Engine மாட்யூல்கள் சரியாக லோட் ஆகவில்லை. Codespaces டெர்மினலில் `touch engine/__init__.py scraper/__init__.py database/__init__.py` இயக்கவும்.")
+            st.error("❌ சில மாட்யூல்களை லோட் செய்ய முடியவில்லை:")
+            for mod, err in import_errors.items():
+                st.code(f"{mod}: {err}")
         else:
             if "AllForm.aspx" in cleaned_url:
                 all_form_url = cleaned_url
@@ -179,6 +176,7 @@ with tab1:
             except Exception as e:
                 status_box.update(label="❌ செயலாக்கத்தில் பிழை ஏற்பட்டது!", state="error")
                 st.error(f"Error Details: {str(e)}")
+                st.code(traceback.format_exc())
 
 # =====================================================================
 # TAB 2: STEP 2 (Upload Modified Excel -> AM Score & Re-Highlighting)
@@ -196,7 +194,8 @@ with tab2:
     if uploaded_file is not None:
         if st.button("⚡ Process Final Scoring & Highlights", type="primary", key="btn_step2"):
             if AMScoreEngine is None:
-                st.error("❌ AMScoreEngine மாட்யூல் சரியாக லோட் ஆகவில்லை.")
+                st.error("❌ AMScoreEngine மாட்யூலை லோட் செய்ய முடியவில்லை:")
+                st.code(import_errors.get("AMScoreEngine", "Unknown error"))
             else:
                 with st.spinner("🔄 Track, Class, Jockey அடிப்படையில் ஹைலைட் மற்றும் AM Score கணக்கிடப்படுகிறது..."):
                     try:
@@ -233,3 +232,4 @@ with tab2:
                         )
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
+                        st.code(traceback.format_exc())
