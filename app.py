@@ -7,6 +7,7 @@ import requests
 from bs4 import BeautifulSoup
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+from openpyxl.formatting.rule import FormulaRule
 
 st.set_page_config(
     page_title="AM PRO Racing System",
@@ -42,7 +43,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown("<div class='main-title'>🏇 AM PRO Racing System</div>", unsafe_allow_html=True)
-st.markdown("<div class='sub-title'>Step 1: URL / HTML to Multi-Sheet Excel | Step 2: Process Edited Excel (Full Highlighting & Score)</div>", unsafe_allow_html=True)
+st.markdown("<div class='sub-title'>Step 1: URL / HTML to Multi-Sheet Matrix | Step 2: AM Final Score</div>", unsafe_allow_html=True)
 
 # =====================================================================
 # HELPER & CLEANING FUNCTIONS
@@ -102,7 +103,7 @@ def clean_filename(name):
     return clean
 
 # =====================================================================
-# MULTI-ENGINE URL SCRAPER (BYPASSES 403)
+# MULTI-ENGINE URL SCRAPER
 # =====================================================================
 
 def fetch_racing_australia_by_url(target_url):
@@ -334,7 +335,7 @@ def parse_racing_australia_html(html_text):
                     odds_m = re.search(r"(\$[\d/.]+[Ff]?)$", rem_text)
                     p_odds = odds_m.group(1) if odds_m else ("$000" if run_type in ["Trial", "Jump Out"] else "")
 
-                    # Column T: Adjusted Calculated Time Calculation
+                    # Column T: Adjusted Calculated Time
                     calc_time_val = ""
                     if p_time and p_dist:
                         try:
@@ -410,6 +411,9 @@ def generate_am_pro_step1_workbook(races):
     green_win_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
     bold_green_font = Font(name="Arial", size=9, bold=True, color="006100")
 
+    # DYNAMIC PURPLE FONT (BOLD + ITALIC) - NO FILL (BACKGROUND DISTURB AAGADHU)
+    purple_font = Font(name="Arial", size=9, bold=True, italic=True, color="7E22CE")
+
     border_thin = Border(
         left=Side(style='thin', color='D9D9D9'),
         right=Side(style='thin', color='D9D9D9'),
@@ -482,6 +486,8 @@ def generate_am_pro_step1_workbook(races):
             "Barrier", "Weight", "Weight Diff", "Jockey Name", "Trainer Name", "Owner Name",
             "Rating", "Position @800", "Position @400", "600m Split", "Finishing Time", "Odds", "Calculated Time"
         ]
+
+        first_past_run_row = r_ptr + 1
 
         for h in race["horses"]:
             h_key = h["name"].lower()
@@ -560,7 +566,7 @@ def generate_am_pro_step1_workbook(races):
                 if cur_barrier_val and past_barrier_val and (cur_barrier_val == past_barrier_val) and past_barrier_val != "0":
                     ws.cell(row=r_ptr, column=8).fill = yellow_match_fill
 
-                # 5. Same Jockey (Column K) -> Yellow
+                # 5. Same Jockey (Initial Current Jockey) -> Yellow Fill
                 past_jockey_clean = clean_jockey_name(run.get("jockey", ""))
                 if cur_jockey_clean and past_jockey_clean and (cur_jockey_clean in past_jockey_clean or past_jockey_clean in cur_jockey_clean):
                     ws.cell(row=r_ptr, column=11).fill = yellow_match_fill
@@ -572,6 +578,22 @@ def generate_am_pro_step1_workbook(races):
             ws.append([])
             ws.append([])
 
+        last_past_run_row = max(r_ptr, 100)
+
+        # =============================================================
+        # DYNAMIC CONDITIONAL FORMATTING RULE FOR COLUMN K
+        # If any jockey is typed in Column R (R1:R24):
+        # Column K FONT ONLY changes to Bold + Italic + Purple!
+        # (NO FILL / BACKGROUND IS PRESERVED INTACT)
+        # =============================================================
+        cf_range = f"K{first_past_run_row}:K{last_past_run_row}"
+        purple_font_rule = FormulaRule(
+            formula=[f'AND(K{first_past_run_row}<>"", COUNTIF($R$1:$R$24, "*"&TRIM(K{first_past_run_row})&"*")>0)'],
+            font=purple_font
+        )
+        ws.conditional_formatting.add(cf_range, purple_font_rule)
+
+        # Standard Column Widths
         standard_widths = {
             "A": 12, "B": 12, "C": 12, "D": 14, "E": 14,
             "F": 10, "G": 12, "H": 10, "I": 12, "J": 12,
@@ -584,20 +606,31 @@ def generate_am_pro_step1_workbook(races):
     return wb
 
 # =====================================================================
-# STEP 2: PROCESS EDITED EXCEL (FULL CONDITIONAL HIGHLIGHTING & SCORES)
+# STEP 2: PROCESS EDITED EXCEL (FONT-ONLY PURPLE HIGHLIGHT)
 # =====================================================================
 
 def process_step2_edited_excel(wb):
     yellow_match_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
     green_win_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
     bold_green_font = Font(name="Arial", size=9, bold=True, color="006100")
-    white_fill = PatternFill(fill_type=None)
+    
+    # Font-Only Purple: Bold + Italic + Purple Color (No Fill)
+    purple_font = Font(name="Arial", size=9, bold=True, italic=True, color="7E22CE")
 
     for ws in wb.worksheets:
         cur_dist = str(ws["B5"].value or "").strip()
         cur_track = str(ws["B6"].value or "").strip()
 
-        # Build Current Horses Map from Rows 12 onwards (before past runs)
+        # Read jockeys entered in Column R (Rows 1 to 24)
+        target_jockeys_r = set()
+        for r_idx in range(1, 25):
+            val = str(ws.cell(row=r_idx, column=18).value or "").strip()
+            if val and val.lower() != "finishing time":
+                cleaned_j = clean_jockey_name(val)
+                if cleaned_j:
+                    target_jockeys_r.add(cleaned_j)
+
+        # Read Current Horses Map (Rows 12 onwards)
         horse_data_map = {}
         for r in range(12, ws.max_row + 1):
             h_no = str(ws.cell(row=r, column=1).value or "").strip()
@@ -615,65 +648,69 @@ def process_step2_edited_excel(wb):
                 "weight": extract_weight_num(wgt)
             }
 
-        # Scan previous run sections and re-apply dynamic highlights
         current_eval_horse = None
         for r in range(15, ws.max_row + 1):
             c1_val = str(ws.cell(row=r, column=1).value or "").strip().upper()
-            c3_val = str(ws.cell(row=r, column=3).value or "").strip()
             c4_val = str(ws.cell(row=r, column=4).value or "").strip()
 
-            # Detect Horse Header Block (A: Name, C: No, D: Jockey)
             if c1_val in horse_data_map:
                 current_eval_horse = c1_val
-                # If user manually edited the jockey in Cell D of the header block, use it!
                 if c4_val:
                     horse_data_map[c1_val]["jockey"] = clean_jockey_name(c4_val)
                 continue
 
-            # Check if this row is a previous run record (Date in col A or finishing pos in col D)
             pos_cell = ws.cell(row=r, column=4)
             pos_str = str(pos_cell.value or "").lower()
             date_cell = ws.cell(row=r, column=1)
             dist_cell = ws.cell(row=r, column=6)
             track_cell = ws.cell(row=r, column=7)
             barrier_cell = ws.cell(row=r, column=8)
-            jockey_cell = ws.cell(row=r, column=11) # Column K (Jockey Name)
+            jockey_cell = ws.cell(row=r, column=11) # Column K
 
             if not date_cell.value and not pos_cell.value:
                 continue
 
-            # Skip header row of table
             if str(date_cell.value or "").lower() == "date":
                 continue
 
-            # 1. Finishing Position Highlight (Top 3)
+            # 1. Finishing Pos (1st, 2nd, 3rd) -> Green
             if "1 of" in pos_str or "2 of" in pos_str or "3 of" in pos_str or pos_str in ["1", "2", "3", "1st", "2nd", "3rd"]:
                 pos_cell.fill = green_win_fill
                 pos_cell.font = bold_green_font
 
-            # 2. Distance Match Highlight
+            # 2. Same Distance -> Yellow
             if dist_cell.value and cur_dist:
                 if re.sub(r"\D", "", str(dist_cell.value)) == re.sub(r"\D", "", cur_dist):
                     dist_cell.fill = yellow_match_fill
 
-            # 3. Track Match Highlight
+            # 3. Same Track -> Yellow
             if track_cell.value and cur_track:
                 if normalize_track(str(track_cell.value)) == normalize_track(cur_track):
                     track_cell.fill = yellow_match_fill
 
-            # 4. Same Barrier Match Highlight
+            # 4. Same Barrier -> Yellow
             if current_eval_horse and barrier_cell.value:
                 cur_bar = horse_data_map[current_eval_horse]["barrier"]
                 past_bar = str(barrier_cell.value).strip()
                 if cur_bar and past_bar and (cur_bar == past_bar) and past_bar != "0":
                     barrier_cell.fill = yellow_match_fill
 
-            # 5. Column K Jockey Highlight (Matches Target Jockey)
-            if current_eval_horse and jockey_cell.value:
-                cur_jock = horse_data_map[current_eval_horse]["jockey"]
-                past_jock = clean_jockey_name(str(jockey_cell.value))
-                if cur_jock and past_jock and (cur_jock in past_jock or past_jock in cur_jock):
-                    jockey_cell.fill = yellow_match_fill
+            # 5. Jockey Column K Formatting:
+            # If in Column R (Rows 1 to 24) -> FONT ONLY CHANGES TO BOLD + ITALIC + PURPLE!
+            # EXISTING BACKGROUND FILL REMAINS UNTOUCHED!
+            if jockey_cell.value:
+                past_jock_clean = clean_jockey_name(str(jockey_cell.value))
+                matched_r = False
+                for tj in target_jockeys_r:
+                    if tj in past_jock_clean or past_jock_clean in tj:
+                        jockey_cell.font = purple_font
+                        matched_r = True
+                        break
+
+                if not matched_r and current_eval_horse:
+                    cur_jock = horse_data_map[current_eval_horse]["jockey"]
+                    if cur_jock and past_jock_clean and (cur_jock in past_jock_clean or past_jock_clean in cur_jock):
+                        jockey_cell.fill = yellow_match_fill
 
 # =====================================================================
 # STREAMLIT UI
@@ -799,7 +836,7 @@ with tab1:
 
 with tab2:
     st.subheader("2. திருத்தப்பட்ட Multi-Sheet Excel-ஐப் பதிவேற்றி Final அறிக்கை பெறுதல்")
-    st.caption("Step 1 எக்செல் ஃபைலில் Track Condition, Barrier அல்லது Jockey மாற்றங்களை முடித்த பின் இங்கே பதிவேற்றவும்.")
+    st.caption("Step 1 எக்செல் ஃபைலில் Column R (வரிசை 1 முதல் 24 வரை) ஜாக்கி பெயர்கள் உள்ளிட்ட மாற்றங்களைச் செய்து இங்கே பதிவேற்றவும்.")
 
     uploaded_file = st.file_uploader(
         "📂 திருத்தப்பட்ட Multi-Sheet Excel (.xlsx) ஃபைலை இங்கே பதிவேற்றவும்:",
@@ -809,7 +846,7 @@ with tab2:
 
     if uploaded_file is not None:
         if st.button("⚡ Process Final Scoring & Highlighting", type="primary", key="btn_step2"):
-            with st.spinner("🔄 Column K Jockey ஹைலைட்டிங் மற்றும் நிபந்தனைகள் புதுப்பிக்கப்படுகின்றன..."):
+            with st.spinner("🔄 Column K ஜாக்கி எழுத்துக்கள் (Purple Bold Italic Font) மற்றும் ஹைலைட்கள் புதுப்பிக்கப்படுகின்றன..."):
                 try:
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
                         tmp.write(uploaded_file.read())
@@ -817,7 +854,6 @@ with tab2:
 
                     wb = openpyxl.load_workbook(temp_in, data_only=False)
                     process_step2_edited_excel(wb)
-
                     wb.save(temp_in)
 
                     with open(temp_in, "rb") as f:
@@ -829,9 +865,9 @@ with tab2:
                         pass
 
                     base_name = os.path.splitext(uploaded_file.name)[0]
-                    final_filename = f"{base_name}_AM_PRO_FINAL.xlsx"
+                    final_filename = f"{base_name}_FINAL.xlsx"
 
-                    st.success("🎉 இறுதி AM PRO பகுப்பாய்வு அறிக்கை வெற்றிகரமாகத் தயாராகிவிட்டது!")
+                    st.success("🎉 இறுதி AM PRO அறிக்கை வெற்றிகரமாகத் தயாராகிவிட்டது!")
                     st.download_button(
                         label=f"📥 Download Final Excel ({final_filename})",
                         data=final_data,
