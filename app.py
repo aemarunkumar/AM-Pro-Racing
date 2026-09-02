@@ -45,14 +45,13 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown("<div class='main-title'>🏇 AM PRO Racing System</div>", unsafe_allow_html=True)
-st.markdown("<div class='sub-title'>Master Control Panel: All Features & Highlighting Active</div>", unsafe_allow_html=True)
+st.markdown("<div class='sub-title'>Step 1: All Form Matrix | Step 2: AM Final Score & Logic Engine</div>", unsafe_allow_html=True)
 
 # =====================================================================
 # HELPER & CLEANING FUNCTIONS
 # =====================================================================
 
 def extract_html_from_bytes(file_bytes):
-    """Handles .html, .htm, and mobile Chrome .mht / .mhtml web archives"""
     try:
         msg = email.message_from_bytes(file_bytes, policy=policy.default)
         if msg.is_multipart():
@@ -366,7 +365,7 @@ def parse_racing_australia_html(html_text):
     return races
 
 # =====================================================================
-# EXACT MULTI-SHEET EXCEL BUILDER
+# EXACT MULTI-SHEET EXCEL BUILDER (INCL. AM SCORE HEADERS L, M, N, O, P, Q)
 # =====================================================================
 
 def generate_am_pro_step1_workbook(races):
@@ -421,18 +420,20 @@ def generate_am_pro_step1_workbook(races):
             ws.cell(row=row_i, column=1).font = bold_font
             ws.cell(row=row_i, column=2).font = regular_font
 
-        # 2. Current Race Table (Row 11)
+        # 2. Current Race Table (Row 11) - INCL AM SCORE HEADERS L to Q
         current_headers = [
             "Horse NO", "Horse Name", "Jockey Name", "Trainer Name", "Owner Name",
-            "Barrier", "Final Weight", "Distance", "Track Condition", "Class", "Rating"
+            "Barrier", "Final Weight", "Distance", "Track Condition", "Class", "Rating",
+            "AM Score", "Cond 1: Dist/Track/Class", "Cond 2: Jockey 70%", "Cond 3: Class Drop & Jockey",
+            "Cond 4: Weight Drop", "Cond 5 & 6: Venue/Season Form"
         ]
 
-        ws.row_dimensions[11].height = 24
+        ws.row_dimensions[11].height = 28
         for col_idx, h_text in enumerate(current_headers, start=1):
             c = ws.cell(row=11, column=col_idx, value=h_text)
             c.fill = navy_fill
             c.font = white_bold
-            c.alignment = Alignment(horizontal="center", vertical="center")
+            c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
         cur_row = 12
         horse_jockey_map = {}
@@ -444,10 +445,13 @@ def generate_am_pro_step1_workbook(races):
             horse_weight_map[h["name"].lower()] = extract_weight_num(h["final_weight"])
             horse_barrier_map[h["name"].lower()] = str(h["barrier"]).strip()
 
-            ws.append([
+            row_data = [
                 h["no"], h["name"], h["jockey"], h["trainer"], h["owner"],
-                h["barrier"], h["final_weight"], cur_dist, cur_track, race["class_name"], ""
-            ])
+                h["barrier"], h["final_weight"], cur_dist, cur_track, race["class_name"], "",
+                "", "", "", "", "", ""
+            ]
+            ws.append(row_data)
+
             for col_idx in range(1, len(current_headers) + 1):
                 c = ws.cell(row=cur_row, column=col_idx)
                 c.font = regular_font
@@ -467,18 +471,11 @@ def generate_am_pro_step1_workbook(races):
         first_past_run_row = r_ptr + 1
 
         for h in race["horses"]:
-            h_key = h["name"].lower()
-            cur_jockey_clean = horse_jockey_map.get(h_key, "")
-            cur_wgt_val = horse_weight_map.get(h_key, 0.0)
-            cur_barrier_val = horse_barrier_map.get(h_key, "")
-
-            # A. Horse Header Row
             ws.cell(row=r_ptr, column=1, value=h["name"]).font = bold_font
             ws.cell(row=r_ptr, column=3, value=h["no"]).font = bold_font
             ws.cell(row=r_ptr, column=4, value=h["jockey"]).font = bold_font
             r_ptr += 1
 
-            # B. Stats Summary Header & Values
             stats_headers = ["Min/Max-Dist-Win", "1st Up", "2nd Up", "Track", "Dist", "Track/Dist", "Firm", "Good", "Soft", "Heavy", "Synthetic"]
             for s_i, s_h in enumerate(stats_headers, start=1):
                 ws.cell(row=r_ptr, column=s_i, value=s_h).font = bold_font
@@ -491,7 +488,6 @@ def generate_am_pro_step1_workbook(races):
                     ws.cell(row=r_ptr, column=s_i, value=s_v).font = regular_font
             r_ptr += 2
 
-            # C. Previous Runs Table Header
             ws.row_dimensions[r_ptr].height = 22
             for col_idx, h_text in enumerate(prev_headers, start=1):
                 c = ws.cell(row=r_ptr, column=col_idx, value=h_text)
@@ -500,9 +496,9 @@ def generate_am_pro_step1_workbook(races):
                 c.alignment = Alignment(horizontal="center", vertical="center")
             r_ptr += 1
 
-            # D. ALL PREVIOUS RUNS
             runs = h.get("runs", [])
             for run in runs:
+                cur_wgt_val = horse_weight_map.get(h["name"].lower(), 0.0)
                 past_wgt_val = extract_weight_num(run.get("weight", "0"))
                 wgt_diff = cur_wgt_val - past_wgt_val if (cur_wgt_val and past_wgt_val) else 0.0
                 wgt_diff_str = f"{wgt_diff:+.1f}kg" if wgt_diff != 0 else "0.0kg"
@@ -534,14 +530,6 @@ def generate_am_pro_step1_workbook(races):
                 if normalize_track(run.get("track", "")) == normalize_track(cur_track):
                     ws.cell(row=r_ptr, column=7).fill = yellow_match_fill
 
-                past_barrier_val = str(run.get("barrier", "")).strip()
-                if cur_barrier_val and past_barrier_val and (cur_barrier_val == past_barrier_val) and past_barrier_val != "0":
-                    ws.cell(row=r_ptr, column=8).fill = yellow_match_fill
-
-                past_jockey_clean = clean_jockey_name(run.get("jockey", ""))
-                if cur_jockey_clean and past_jockey_clean and (cur_jockey_clean in past_jockey_clean or past_jockey_clean in cur_jockey_clean):
-                    ws.cell(row=r_ptr, column=11).fill = yellow_match_fill
-
                 r_ptr += 1
 
             r_ptr += 3
@@ -551,7 +539,6 @@ def generate_am_pro_step1_workbook(races):
 
         last_past_run_row = max(r_ptr, 120)
 
-        # Dynamic Conditional Formatting Rule for Column K (Matches R1:R24)
         cf_range = f"K{first_past_run_row}:K{last_past_run_row}"
         purple_font_rule = FormulaRule(
             formula=[f'AND(K{first_past_run_row}<>"", COUNTIF($R$1:$R$24, "*"&TRIM(K{first_past_run_row})&"*")>0)'],
@@ -565,7 +552,7 @@ def generate_am_pro_step1_workbook(races):
     return wb
 
 # =====================================================================
-# STEP 2: PROCESS EDITED EXCEL (ALL RULES ACTIVE)
+# STEP 2: PROCESS EDITED EXCEL (AM SCORE CALCULATION & 6 CONDITIONS LOGIC)
 # =====================================================================
 
 def process_step2_edited_excel(wb):
@@ -574,7 +561,6 @@ def process_step2_edited_excel(wb):
     bold_green_font = Font(name="Arial", size=9, bold=True, color="006100")
     purple_font = Font(name="Arial", size=9, bold=True, italic=True, color="7E22CE")
 
-    # 1. Read Master Place Code strictly from the first sheet (R1) Cell B4!
     first_ws = wb.worksheets[0]
     r1_master_place = str(first_ws["B4"].value or "").strip()
     r1_master_place = re.sub(r"^[='\"+]+", "", r1_master_place).strip()
@@ -585,8 +571,8 @@ def process_step2_edited_excel(wb):
         cur_track = str(ws["B6"].value or "").strip()
         cur_class_b7 = str(ws["B7"].value or "").strip()
         cur_class_norm = normalize_code(cur_class_b7)
+        cur_dist_num = extract_weight_num(cur_dist)
 
-        # Live winning jockeys in Column R (Rows 1 to 24)
         target_jockeys_r = set()
         for r_idx in range(1, 25):
             val = str(ws.cell(row=r_idx, column=18).value or "").strip()
@@ -595,7 +581,10 @@ def process_step2_edited_excel(wb):
                 if cleaned_j:
                     target_jockeys_r.add(cleaned_j)
 
-        horse_data_map = {}
+        # Build Horse Runs Map for AM Score Evaluation
+        horses_eval_data = {}
+        row_idx_map = {}
+
         for r in range(12, ws.max_row + 1):
             h_no = str(ws.cell(row=r, column=1).value or "").strip()
             h_name = str(ws.cell(row=r, column=2).value or "").strip().upper()
@@ -606,10 +595,12 @@ def process_step2_edited_excel(wb):
             if not h_no or not h_no.isdigit():
                 break
 
-            horse_data_map[h_name] = {
+            row_idx_map[h_name] = r
+            horses_eval_data[h_name] = {
                 "jockey": clean_jockey_name(jock),
                 "barrier": barrier,
-                "weight": extract_weight_num(wgt)
+                "weight": extract_weight_num(wgt),
+                "runs": []
             }
 
         current_eval_horse = None
@@ -617,64 +608,68 @@ def process_step2_edited_excel(wb):
             c1_val = str(ws.cell(row=r, column=1).value or "").strip().upper()
             c4_val = str(ws.cell(row=r, column=4).value or "").strip()
 
-            if c1_val in horse_data_map:
+            if c1_val in horses_eval_data:
                 current_eval_horse = c1_val
                 if c4_val:
-                    horse_data_map[c1_val]["jockey"] = clean_jockey_name(c4_val)
+                    horses_eval_data[c1_val]["jockey"] = clean_jockey_name(c4_val)
                 continue
 
-            date_cell = ws.cell(row=r, column=1) # Col A
-            place_cell = ws.cell(row=r, column=2) # Col B
-            pos_cell = ws.cell(row=r, column=4) # Col D
-            class_cell = ws.cell(row=r, column=5) # Col E
-            dist_cell = ws.cell(row=r, column=6) # Col F
-            track_cell = ws.cell(row=r, column=7) # Col G
-            barrier_cell = ws.cell(row=r, column=8) # Col H
-            jockey_cell = ws.cell(row=r, column=11) # Col K
+            date_cell = ws.cell(row=r, column=1)
+            place_cell = ws.cell(row=r, column=2)
+            pos_cell = ws.cell(row=r, column=4)
+            class_cell = ws.cell(row=r, column=5)
+            dist_cell = ws.cell(row=r, column=6)
+            track_cell = ws.cell(row=r, column=7)
+            barrier_cell = ws.cell(row=r, column=8)
+            weight_cell = ws.cell(row=r, column=9)
+            jockey_cell = ws.cell(row=r, column=11)
 
             pos_str = str(pos_cell.value or "").lower()
 
             if not date_cell.value and not pos_cell.value:
                 continue
-
             if str(date_cell.value or "").lower() == "date":
                 continue
 
-            # 1. UNIVERSAL PLACE MATCH (Column B matching R1!B4 Master Place Code) -> Yellow Highlight!
+            # Place match B4
             if place_cell.value and r1_master_norm:
                 past_place_norm = normalize_code(place_cell.value)
                 if r1_master_norm == past_place_norm or r1_master_norm in past_place_norm or past_place_norm in r1_master_norm:
                     place_cell.fill = yellow_match_fill
 
-            # 2. Finishing Pos (1st, 2nd, 3rd) -> Green
-            if "1 of" in pos_str or "2 of" in pos_str or "3 of" in pos_str or pos_str in ["1", "2", "3", "1st", "2nd", "3rd"]:
+            # Win/Place Top 3
+            is_top3 = any(p in pos_str for p in ["1 of", "2 of", "3 of", "1", "2", "3", "1st", "2nd", "3rd"])
+            is_top2 = any(p in pos_str for p in ["1 of", "2 of", "1", "2", "1st", "2nd"])
+            is_top4 = is_top3 or "4 of" in pos_str or "4" in pos_str or "4th" in pos_str
+
+            if is_top3:
                 pos_cell.fill = green_win_fill
                 pos_cell.font = bold_green_font
 
-            # 3. Class Match (Column E matching B7 Class) -> Yellow Highlight!
+            # Class match B7
             if class_cell.value and cur_class_norm:
                 past_class_norm = normalize_code(class_cell.value)
                 if cur_class_norm == past_class_norm or cur_class_norm in past_class_norm or past_class_norm in cur_class_norm:
                     class_cell.fill = yellow_match_fill
 
-            # 4. Same Distance (Col F) -> Yellow
+            # Distance match
             if dist_cell.value and cur_dist:
                 if re.sub(r"\D", "", str(dist_cell.value)) == re.sub(r"\D", "", cur_dist):
                     dist_cell.fill = yellow_match_fill
 
-            # 5. Same Track Condition (Col G) -> Yellow
+            # Track match
             if track_cell.value and cur_track:
                 if normalize_track(str(track_cell.value)) == normalize_track(cur_track):
                     track_cell.fill = yellow_match_fill
 
-            # 6. Same Barrier (Col H) -> Yellow
+            # Barrier match
             if current_eval_horse and barrier_cell.value:
-                cur_bar = horse_data_map[current_eval_horse]["barrier"]
+                cur_bar = horses_eval_data[current_eval_horse]["barrier"]
                 past_bar = str(barrier_cell.value).strip()
                 if cur_bar and past_bar and (cur_bar == past_bar) and past_bar != "0":
                     barrier_cell.fill = yellow_match_fill
 
-            # 7. Jockey Match (Col K) -> If in R1:R24 -> PURPLE FONT ONLY (BACKGROUND PRESERVED)
+            # Jockey highlight
             if jockey_cell.value:
                 past_jock_clean = clean_jockey_name(str(jockey_cell.value))
                 matched_r = False
@@ -685,9 +680,118 @@ def process_step2_edited_excel(wb):
                         break
 
                 if not matched_r and current_eval_horse:
-                    cur_jock = horse_data_map[current_eval_horse]["jockey"]
+                    cur_jock = horses_eval_data[current_eval_horse]["jockey"]
                     if cur_jock and past_jock_clean and (cur_jock in past_jock_clean or past_jock_clean in cur_jock):
                         jockey_cell.fill = yellow_match_fill
+
+            # Collect run for AM score
+            if current_eval_horse:
+                horses_eval_data[current_eval_horse]["runs"].append({
+                    "dist": str(dist_cell.value or ""),
+                    "track": str(track_cell.value or ""),
+                    "class": str(class_cell.value or ""),
+                    "pos": pos_str,
+                    "jockey": clean_jockey_name(str(jockey_cell.value or "")),
+                    "weight": extract_weight_num(weight_cell.value),
+                    "place": str(place_cell.value or "")
+                })
+
+        # =====================================================================
+        # CALCULATE AM SCORES & WRITE TO COLUMNS L TO Q
+        # =====================================================================
+        for h_name, h_info in horses_eval_data.items():
+            r_idx = row_idx_map.get(h_name)
+            if not r_idx:
+                continue
+
+            cur_jock = h_info["jockey"]
+            cur_wgt = h_info["weight"]
+            runs = h_info["runs"]
+            total_runs = len(runs)
+
+            # Condition 1: Same Dist, Track, Class & Top 3
+            cond1_score = 0
+            cond1_desc = ""
+            for run in runs:
+                d_match = re.sub(r"\D", "", run["dist"]) == re.sub(r"\D", "", cur_dist)
+                t_match = normalize_track(run["track"]) == normalize_track(cur_track)
+                c_match = cur_class_norm and (cur_class_norm in normalize_code(run["class"]) or normalize_code(run["class"]) in cur_class_norm)
+                is_top3 = any(p in run["pos"] for p in ["1 of", "2 of", "3 of", "1", "2", "3", "1st", "2nd", "3rd"])
+                if d_match and t_match and c_match and is_top3:
+                    cond1_score = 1
+                    cond1_desc = "Cond 1: Same Dist/Track/Class Top 3 (+1)"
+                    break
+
+            # Condition 2: Same Jockey 70%+ Top 2
+            cond2_score = 0
+            cond2_desc = ""
+            if total_runs > 0 and cur_jock:
+                jock_runs = [r for r in runs if cur_jock in r["jockey"] or r["jockey"] in cur_jock]
+                if len(jock_runs) >= 2:
+                    jock_top2 = sum(1 for r in jock_runs if any(p in r["pos"] for p in ["1 of", "2 of", "1", "2", "1st", "2nd"]))
+                    pct = (jock_top2 / len(jock_runs)) * 100.0
+                    if pct >= 70.0:
+                        cond2_score = 1
+                        cond2_desc = f"Cond 2: Jockey {pct:.0f}% Top 2 (+1)"
+
+            # Condition 3: Higher Class Experience (Top 4) -> Lower Class Top 2 (Same Track) + Same Jockey extra
+            cond3_score = 0
+            cond3_desc_parts = []
+            has_higher_exp = any(any(hc in normalize_code(r["class"]) for hc in ["bm84", "bm90", "bm100", "open", "g1", "g2", "g3", "lr"]) and any(p in r["pos"] for p in ["1", "2", "3", "4"]) for r in runs)
+            if has_higher_exp:
+                for run in runs:
+                    t_match = normalize_track(run["track"]) == normalize_track(cur_track)
+                    is_top2 = any(p in run["pos"] for p in ["1 of", "2 of", "1", "2", "1st", "2nd"])
+                    if t_match and is_top2:
+                        cond3_score += 1
+                        cond3_desc_parts.append("Class Drop Top 2 (+1)")
+                        if cur_jock and (cur_jock in run["jockey"] or run["jockey"] in cur_jock):
+                            cond3_score += 1
+                            cond3_desc_parts.append("Same Jockey Bonus (+1)")
+                        break
+            cond3_desc = " | ".join(cond3_desc_parts)
+
+            # Condition 4: Weight Drop >= 2.5kg
+            cond4_score = 0
+            cond4_desc = ""
+            for run in runs:
+                past_wgt = run["weight"]
+                if past_wgt > 0 and cur_wgt > 0:
+                    wgt_drop = past_wgt - cur_wgt
+                    if wgt_drop >= 2.5:
+                        cond4_score = 1
+                        cond4_desc = f"Cond 4: Weight Drop {wgt_drop:.1f}kg (+1)"
+                        break
+
+            # Condition 5 & 6: Venue Place % (>=60% Top 3) & Recent 6M Form (>=60% Top 3)
+            cond5_6_score = 0
+            cond5_6_desc_parts = []
+            if total_runs > 0 and r1_master_norm:
+                venue_runs = [r for r in runs if r1_master_norm in normalize_code(r["place"]) or normalize_code(r["place"]) in r1_master_norm]
+                if len(venue_runs) >= 2:
+                    v_top3 = sum(1 for r in venue_runs if any(p in r["pos"] for p in ["1 of", "2 of", "3 of", "1", "2", "3", "1st", "2nd", "3rd"]))
+                    if (v_top3 / len(venue_runs)) >= 0.60:
+                        cond5_6_score += 1
+                        cond5_6_desc_parts.append("Venue >60% Top3 (+1)")
+
+                # Assuming recent form from runs order
+                recent_runs = runs[:5] if len(runs) >= 5 else runs
+                if len(recent_runs) >= 2:
+                    r_top3 = sum(1 for r in recent_runs if any(p in r["pos"] for p in ["1 of", "2 of", "3 of", "1", "2", "3", "1st", "2nd", "3rd"]))
+                    if (r_top3 / len(recent_runs)) >= 0.60:
+                        cond5_6_score += 1
+                        cond5_6_desc_parts.append("Recent Form >60% (+1)")
+            cond5_6_desc = " | ".join(cond5_6_desc_parts)
+
+            total_am_score = cond1_score + cond2_score + cond3_score + cond4_score + cond5_6_score
+
+            # Write to Excel Columns L, M, N, O, P, Q
+            ws.cell(row=r_idx, column=12, value=total_am_score if total_am_score > 0 else "") # L: AM Score
+            ws.cell(row=r_idx, column=13, value=cond1_desc) # M
+            ws.cell(row=r_idx, column=14, value=cond2_desc) # N
+            ws.cell(row=r_idx, column=15, value=cond3_desc) # O
+            ws.cell(row=r_idx, column=16, value=cond4_desc) # P
+            ws.cell(row=r_idx, column=17, value=cond5_6_desc) # Q
 
         for col_letter in ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T"]:
             ws.column_dimensions[col_letter].width = 8.5
@@ -801,7 +905,7 @@ with tab1:
 
 with tab2:
     st.subheader("2. திருத்தப்பட்ட Multi-Sheet Excel-ஐப் பதிவேற்றி Final அறிக்கை பெறுதல்")
-    st.caption("R1 ஷீட்டில் B4 Place Code, B7 Class மற்றும் R1:R24 வெற்றிபெற்ற ஜாக்கி பெயர்களை எடிட் செய்த பின் இங்கே பதிவேற்றவும்.")
+    st.caption("R1 ஷீட்டில் B4 Place Code, B7 Class மற்றும் R1:R24 வெற்றிபெற்ற ஜாக்கி பெயர்களை எடிட் செய்த பின் இங்கே பதிவேற்றவும். Col L-ல் AM ஸ்கோர் மற்றும் Col M-Q-ல் காரணங்கள் உருவாக்கப்படும்.")
 
     uploaded_file = st.file_uploader(
         "📂 திருத்தப்பட்ட Multi-Sheet Excel (.xlsx) ஃபைலை இங்கே பதிவேற்றவும்:",
@@ -810,8 +914,8 @@ with tab2:
     )
 
     if uploaded_file is not None:
-        if st.button("⚡ Process Final Scoring & Highlighting", type="primary", key="btn_step2"):
-            with st.spinner("🔄 அனைத்து ஷீட்டுகளும் பரிசீலிக்கப்பட்டு ஹைலைட்கள் மற்றும் ஜாக்கி பெயர்கள் புதுப்பிக்கப்படுகின்றன..."):
+        if st.button("⚡ Process AM Scoring & Highlighting", type="primary", key="btn_step2"):
+            with st.spinner("🔄 AM ஸ்கோர்கள் கணக்கிடப்பட்டு, அனைத்து ஷீட்டுகளும் புதுப்பிக்கப்படுகின்றன..."):
                 try:
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
                         tmp.write(uploaded_file.read())
@@ -828,9 +932,9 @@ with tab2:
                     except Exception: pass
 
                     base_name = os.path.splitext(uploaded_file.name)[0]
-                    final_filename = f"{base_name}_FINAL.xlsx"
+                    final_filename = f"{base_name}_AM_FINAL.xlsx"
 
-                    st.success("🎉 இறுதி AM PRO அறிக்கை வெற்றிகரமாகத் தயாராகிவிட்டது!")
+                    st.success("🎉 இறுதி AM PRO ஸ்கோர் அறிக்கை வெற்றிகரமாகத் தயாராகிவிட்டது!")
                     st.download_button(
                         label=f"📥 Download Final Excel ({final_filename})",
                         data=final_data,
