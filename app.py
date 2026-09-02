@@ -43,7 +43,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown("<div class='main-title'>🏇 AM PRO Racing System</div>", unsafe_allow_html=True)
-st.markdown("<div class='sub-title'>Step 1: URL / HTML to Multi-Sheet Matrix | Step 2: AM Final Score</div>", unsafe_allow_html=True)
+st.markdown("<div class='sub-title'>Step 1: All Form to Multi-Sheet Matrix | Step 2: AM Final Score</div>", unsafe_allow_html=True)
 
 # =====================================================================
 # HELPER & CLEANING FUNCTIONS
@@ -103,7 +103,7 @@ def clean_filename(name):
     return clean
 
 # =====================================================================
-# MULTI-ENGINE URL SCRAPER
+# MULTI-PROXY URL ENGINE (FAST TIMEOUT & BYPASS)
 # =====================================================================
 
 def fetch_racing_australia_by_url(target_url):
@@ -113,45 +113,39 @@ def fetch_racing_australia_by_url(target_url):
 
     session = requests.Session()
 
-    headers_list = [
-        {
-            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Referer": "https://www.racingaustralia.horse/"
-        },
-        {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Referer": "https://www.racingaustralia.horse/"
-        }
-    ]
+    # 1. Direct fetch with real desktop headers
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-AU,en;q=0.9",
+        "Referer": "https://www.racingaustralia.horse/"
+    }
 
-    for h in headers_list:
-        try:
-            res = session.get(cleaned_url, headers=h, timeout=12, allow_redirects=True)
-            if res.status_code == 200 and ("horse-form-table" in res.text or "race-title" in res.text):
-                return res.text
-        except Exception:
-            pass
+    try:
+        res = session.get(cleaned_url, headers=headers, timeout=6)
+        if res.status_code == 200 and ("horse-form-table" in res.text or "race-title" in res.text):
+            return res.text
+    except Exception:
+        pass
 
+    # 2. Free CORS proxy mirrors (Quick 8s timeout)
     encoded_url = urllib.parse.quote(cleaned_url, safe="")
-    mirror_proxies = [
+    mirrors = [
         f"https://api.allorigins.win/raw?url={encoded_url}",
-        f"https://api.codetabs.com/v1/proxy?quest={cleaned_url}",
-        f"https://corsproxy.io/?{encoded_url}"
+        f"https://corsproxy.io/?{encoded_url}",
+        f"https://api.codetabs.com/v1/proxy?quest={cleaned_url}"
     ]
 
-    for p_url in mirror_proxies:
+    for m_url in mirrors:
         try:
-            p_res = requests.get(p_url, timeout=20)
-            if p_res.status_code == 200 and len(p_res.text) > 2000:
-                if "horse-form-table" in p_res.text or "race-title" in p_res.text:
-                    return p_res.text
+            m_res = requests.get(m_url, timeout=8)
+            if m_res.status_code == 200 and len(m_res.text) > 2000:
+                if "horse-form-table" in m_res.text or "race-title" in m_res.text:
+                    return m_res.text
         except Exception:
             continue
 
-    fallback_res = requests.get(cleaned_url, headers=headers_list[0], timeout=15)
-    return fallback_res.text
+    raise Exception("Racing Australia WAF Firewall காரணமாக நேரடி URL இணைப்பு தடுக்கப்பட்டது. தயவுசெய்து கீழே உள்ள 'HTML File Upload' அல்லது 'HTML Paste' முறையைப் பயன்படுத்தவும்.")
 
 # =====================================================================
 # HTML ALL FORM PARSER
@@ -165,6 +159,7 @@ def parse_racing_australia_html(html_text):
     meeting_country = "NSW"
     date_formatted = "02Sep2026"
 
+    # Venue & Date Extraction
     venue_elem = soup.find("div", class_="race-venue")
     if venue_elem:
         h2 = venue_elem.find("h2")
@@ -411,7 +406,7 @@ def generate_am_pro_step1_workbook(races):
     green_win_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
     bold_green_font = Font(name="Arial", size=9, bold=True, color="006100")
 
-    # DYNAMIC PURPLE FONT (BOLD + ITALIC) - NO FILL (BACKGROUND DISTURB AAGADHU)
+    # Font-Only Purple (Bold + Italic) - Background Fill untouched!
     purple_font = Font(name="Arial", size=9, bold=True, italic=True, color="7E22CE")
 
     border_thin = Border(
@@ -566,7 +561,7 @@ def generate_am_pro_step1_workbook(races):
                 if cur_barrier_val and past_barrier_val and (cur_barrier_val == past_barrier_val) and past_barrier_val != "0":
                     ws.cell(row=r_ptr, column=8).fill = yellow_match_fill
 
-                # 5. Same Jockey (Initial Current Jockey) -> Yellow Fill
+                # 5. Same Jockey -> Yellow Fill
                 past_jockey_clean = clean_jockey_name(run.get("jockey", ""))
                 if cur_jockey_clean and past_jockey_clean and (cur_jockey_clean in past_jockey_clean or past_jockey_clean in cur_jockey_clean):
                     ws.cell(row=r_ptr, column=11).fill = yellow_match_fill
@@ -578,14 +573,9 @@ def generate_am_pro_step1_workbook(races):
             ws.append([])
             ws.append([])
 
-        last_past_run_row = max(r_ptr, 100)
+        last_past_run_row = max(r_ptr, 120)
 
-        # =============================================================
-        # DYNAMIC CONDITIONAL FORMATTING RULE FOR COLUMN K
-        # If any jockey is typed in Column R (R1:R24):
-        # Column K FONT ONLY changes to Bold + Italic + Purple!
-        # (NO FILL / BACKGROUND IS PRESERVED INTACT)
-        # =============================================================
+        # Dynamic Rule: Font-only Bold+Italic+Purple (Matching R1:R24)
         cf_range = f"K{first_past_run_row}:K{last_past_run_row}"
         purple_font_rule = FormulaRule(
             formula=[f'AND(K{first_past_run_row}<>"", COUNTIF($R$1:$R$24, "*"&TRIM(K{first_past_run_row})&"*")>0)'],
@@ -606,22 +596,19 @@ def generate_am_pro_step1_workbook(races):
     return wb
 
 # =====================================================================
-# STEP 2: PROCESS EDITED EXCEL (FONT-ONLY PURPLE HIGHLIGHT)
+# STEP 2: PROCESS EDITED EXCEL
 # =====================================================================
 
 def process_step2_edited_excel(wb):
     yellow_match_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
     green_win_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
     bold_green_font = Font(name="Arial", size=9, bold=True, color="006100")
-    
-    # Font-Only Purple: Bold + Italic + Purple Color (No Fill)
     purple_font = Font(name="Arial", size=9, bold=True, italic=True, color="7E22CE")
 
     for ws in wb.worksheets:
         cur_dist = str(ws["B5"].value or "").strip()
         cur_track = str(ws["B6"].value or "").strip()
 
-        # Read jockeys entered in Column R (Rows 1 to 24)
         target_jockeys_r = set()
         for r_idx in range(1, 25):
             val = str(ws.cell(row=r_idx, column=18).value or "").strip()
@@ -630,7 +617,6 @@ def process_step2_edited_excel(wb):
                 if cleaned_j:
                     target_jockeys_r.add(cleaned_j)
 
-        # Read Current Horses Map (Rows 12 onwards)
         horse_data_map = {}
         for r in range(12, ws.max_row + 1):
             h_no = str(ws.cell(row=r, column=1).value or "").strip()
@@ -665,7 +651,7 @@ def process_step2_edited_excel(wb):
             dist_cell = ws.cell(row=r, column=6)
             track_cell = ws.cell(row=r, column=7)
             barrier_cell = ws.cell(row=r, column=8)
-            jockey_cell = ws.cell(row=r, column=11) # Column K
+            jockey_cell = ws.cell(row=r, column=11)
 
             if not date_cell.value and not pos_cell.value:
                 continue
@@ -673,31 +659,24 @@ def process_step2_edited_excel(wb):
             if str(date_cell.value or "").lower() == "date":
                 continue
 
-            # 1. Finishing Pos (1st, 2nd, 3rd) -> Green
             if "1 of" in pos_str or "2 of" in pos_str or "3 of" in pos_str or pos_str in ["1", "2", "3", "1st", "2nd", "3rd"]:
                 pos_cell.fill = green_win_fill
                 pos_cell.font = bold_green_font
 
-            # 2. Same Distance -> Yellow
             if dist_cell.value and cur_dist:
                 if re.sub(r"\D", "", str(dist_cell.value)) == re.sub(r"\D", "", cur_dist):
                     dist_cell.fill = yellow_match_fill
 
-            # 3. Same Track -> Yellow
             if track_cell.value and cur_track:
                 if normalize_track(str(track_cell.value)) == normalize_track(cur_track):
                     track_cell.fill = yellow_match_fill
 
-            # 4. Same Barrier -> Yellow
             if current_eval_horse and barrier_cell.value:
                 cur_bar = horse_data_map[current_eval_horse]["barrier"]
                 past_bar = str(barrier_cell.value).strip()
                 if cur_bar and past_bar and (cur_bar == past_bar) and past_bar != "0":
                     barrier_cell.fill = yellow_match_fill
 
-            # 5. Jockey Column K Formatting:
-            # If in Column R (Rows 1 to 24) -> FONT ONLY CHANGES TO BOLD + ITALIC + PURPLE!
-            # EXISTING BACKGROUND FILL REMAINS UNTOUCHED!
             if jockey_cell.value:
                 past_jock_clean = clean_jockey_name(str(jockey_cell.value))
                 matched_r = False
@@ -716,18 +695,63 @@ def process_step2_edited_excel(wb):
 # STREAMLIT UI
 # =====================================================================
 
-tab1, tab2 = st.tabs(["🌐 STEP 1: Racing Australia URL / HTML", "📊 STEP 2: Process Edited Excel (AM Final Score)"])
+tab1, tab2 = st.tabs(["🌐 STEP 1: Racing Australia Input (URL / File / HTML)", "📊 STEP 2: Process Edited Excel (AM Final Score)"])
 
 with tab1:
     st.subheader("1. Racing Australia All Form-லிருந்து Excel உருவாக்குதல்")
     
     input_choice = st.radio(
         "உள்ளீட்டு முறையைத் தேர்ந்தெடுக்கவும் (Input Method):",
-        ["🔗 Direct All Form URL (நேரடி முகவரி)", "📋 Paste Page Source HTML (குறியீடு பேஸ்ட் செய்தல்)"],
+        [
+            "📁 Upload HTML File (மொபைலில் எளிதான முறை)",
+            "🔗 Direct All Form URL (நேரடி முகவரி)",
+            "📋 Paste Page Source HTML (குறியீடு பேஸ்ட் செய்தல்)"
+        ],
         horizontal=True
     )
 
-    if input_choice == "🔗 Direct All Form URL (நேரடி முகவரி)":
+    # 1. FILE UPLOAD (Best & Easiest for Mobile)
+    if input_choice == "📁 Upload HTML File (மொபைலில் எளிதான முறை)":
+        st.caption("💡 **மொபைல் வழிமுறை:** Chrome-ல் Racing Australia AllForm பக்கத்தில் 3 புள்ளிகளைத் (︙) தட்டி **Download (⬇️)** கொடுத்தால் `.html` ஃபைலாக சேமிக்கப்படும். அதை இங்கே பதிவேற்றவும்.")
+        uploaded_html = st.file_uploader("Racing Australia HTML ஃபைலை பதிவேற்றவும்:", type=["html", "htm"], key="uploader_html_file")
+        
+        if uploaded_html is not None:
+            if st.button("🚀 Process Uploaded File & Generate Excel", type="primary", key="btn_file_gen"):
+                with st.spinner("🔄 HTML ஃபைலிலிருந்து பந்தய விவரங்கள் பெறப்படுகின்றன..."):
+                    html_content = uploaded_html.read().decode("utf-8", errors="ignore")
+                    races = parse_racing_australia_html(html_content)
+                    if not races:
+                        st.error("❌ ஃபைலிலிருந்து விவரங்களைப் பிரிக்க முடியவில்லை. சரியான AllForm HTML ஃபைல் தானா என சரிபார்க்கவும்.")
+                    else:
+                        total_horses = sum(len(r["horses"]) for r in races)
+                        total_runs = sum(sum(len(h["runs"]) for h in r["horses"]) for r in races)
+
+                        date_prefix = races[0].get("date_formatted", "02Sep2026")
+                        b4_place = clean_filename(races[0]["place"])
+                        out_filename = f"{date_prefix}_{b4_place}.xlsx"
+
+                        wb = generate_am_pro_step1_workbook(races)
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+                            temp_path = tmp.name
+                        wb.save(temp_path)
+
+                        with open(temp_path, "rb") as f:
+                            excel_data = f.read()
+
+                        try: os.remove(temp_path)
+                        except Exception: pass
+
+                        st.success(f"🎉 வெற்றி! {len(races)} பந்தயங்கள் | {total_horses} குதிரைகள் | {total_runs} முந்தைய ஓட்டங்கள் பெறப்பட்டன.")
+                        st.download_button(
+                            label=f"📥 Download ({out_filename})",
+                            data=excel_data,
+                            file_name=out_filename,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
+                        )
+
+    # 2. DIRECT URL
+    elif input_choice == "🔗 Direct All Form URL (நேரடி முகவரி)":
         input_url = st.text_input(
             "Racing Australia All Form URL:",
             placeholder="https://www.racingaustralia.horse/FreeFields/AllForm.aspx?Key=...",
@@ -740,15 +764,15 @@ with tab1:
             else:
                 status_box = st.status("🔄 இணையதளத்திலிருந்து தகவல்கள் பெறப்படுகின்றன...", expanded=True)
                 try:
-                    status_box.write("🌐 1. சர்வர் இணைப்பு பெறப்படுகிறது...")
+                    status_box.write("🌐 சர்வர் இணைப்பு பெறப்படுகிறது (அதிகபட்சம் 8 வினாடிகள்)...")
                     html_data = fetch_racing_australia_by_url(cleaned_url)
 
-                    status_box.write("📋 2. குதிரைகள் மற்றும் முந்தைய ஓட்டங்கள் பிரித்தெடுக்கப்படுகின்றன...")
+                    status_box.write("📋 குதிரைகள் மற்றும் முந்தைய ஓட்டங்கள் பிரிக்கப்படுகின்றன...")
                     races = parse_racing_australia_html(html_data)
 
                     if not races:
-                        status_box.update(label="❌ விவரங்களைப் பிரிக்க முடியவில்லை! HTML Paste முறையைப் பயன்படுத்தவும்.", state="error")
-                        st.error("தரவுகளைப் பெற முடியவில்லை. மேலே உள்ள 'Paste Page Source HTML' ஆப்ஷனைப் பயன்படுத்தவும்.")
+                        status_box.update(label="❌ விவரங்களைப் பிரிக்க முடியவில்லை!", state="error")
+                        st.error("Racing Australia WAF தடுத்துள்ளது. மேலே உள்ள 'Upload HTML File' முறையைப் பயன்படுத்தவும்.")
                     else:
                         total_horses = sum(len(r["horses"]) for r in races)
                         total_runs = sum(sum(len(h["runs"]) for h in r["horses"]) for r in races)
@@ -756,9 +780,6 @@ with tab1:
                         date_prefix = races[0].get("date_formatted", "02Sep2026")
                         b4_place = clean_filename(races[0]["place"])
                         out_filename = f"{date_prefix}_{b4_place}.xlsx"
-
-                        status_box.write(f"✅ {len(races)} பந்தயங்கள் | {total_horses} குதிரைகள் | {total_runs} முந்தைய ஓட்டங்கள் பெறப்பட்டன.")
-                        status_box.write("📊 3. Excel Multi-Sheet கோப்பு உருவாக்கப்படுகிறது...")
 
                         wb = generate_am_pro_step1_workbook(races)
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
@@ -768,10 +789,8 @@ with tab1:
                         with open(temp_path, "rb") as f:
                             excel_data = f.read()
 
-                        try:
-                            os.remove(temp_path)
-                        except Exception:
-                            pass
+                        try: os.remove(temp_path)
+                        except Exception: pass
 
                         status_box.update(label="🎉 Excel கோப்பு தயாராகிவிட்டது!", state="complete", expanded=False)
                         st.success(f"🎉 வெற்றி! {len(races)} பந்தயங்களுக்கான எக்செல் தயார்!")
@@ -785,9 +804,10 @@ with tab1:
                         )
 
                 except Exception as e:
-                    status_box.update(label="❌ பிழை ஏற்பட்டது!", state="error")
-                    st.error(f"Error Details: {str(e)}")
+                    status_box.update(label="❌ இணைப்பு தோல்வி!", state="error")
+                    st.error(f"{str(e)}")
 
+    # 3. DIRECT HTML PASTE
     else:
         html_input = st.text_area(
             "📋 Racing Australia Page Source (HTML Code):",
@@ -820,10 +840,8 @@ with tab1:
                         with open(temp_path, "rb") as f:
                             excel_data = f.read()
 
-                        try:
-                            os.remove(temp_path)
-                        except Exception:
-                            pass
+                        try: os.remove(temp_path)
+                        except Exception: pass
 
                         st.success(f"🎉 வெற்றி! {len(races)} பந்தயங்கள் | {total_horses} குதிரைகள் | {total_runs} முந்தைய ஓட்டங்கள் கண்டறியப்பட்டன.")
                         st.download_button(
@@ -859,10 +877,8 @@ with tab2:
                     with open(temp_in, "rb") as f:
                         final_data = f.read()
 
-                    try:
-                        os.remove(temp_in)
-                    except Exception:
-                        pass
+                    try: os.remove(temp_in)
+                    except Exception: pass
 
                     base_name = os.path.splitext(uploaded_file.name)[0]
                     final_filename = f"{base_name}_FINAL.xlsx"
