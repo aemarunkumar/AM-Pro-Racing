@@ -1,6 +1,8 @@
 import os
 import re
 import tempfile
+import email
+from email import policy
 import urllib.parse
 import streamlit as st
 import requests
@@ -48,6 +50,24 @@ st.markdown("<div class='sub-title'>Step 1: All Form to Multi-Sheet Matrix | Ste
 # =====================================================================
 # HELPER & CLEANING FUNCTIONS
 # =====================================================================
+
+def extract_html_from_bytes(file_bytes):
+    """Handles .html, .htm, and mobile Chrome .mht / .mhtml web archives"""
+    try:
+        msg = email.message_from_bytes(file_bytes, policy=policy.default)
+        if msg.is_multipart():
+            for part in msg.iter_parts():
+                if part.get_content_type() == "text/html":
+                    return part.get_content()
+    except Exception:
+        pass
+
+    text = file_bytes.decode("utf-8", errors="ignore")
+    # If MHTML headers are present, extract between <!DOCTYPE and </html>
+    match = re.search(r"(<!DOCTYPE\s+html[^>]*>[\s\S]*?</html>)", text, re.I)
+    if match:
+        return match.group(1)
+    return text
 
 def clean_jockey_name(name):
     if not name:
@@ -101,51 +121,6 @@ def clean_filename(name):
     clean = re.sub(r'[\\/*?:"<>|]', "", str(name))
     clean = clean.replace("%20", " ").strip()
     return clean
-
-# =====================================================================
-# MULTI-PROXY URL ENGINE (FAST TIMEOUT & BYPASS)
-# =====================================================================
-
-def fetch_racing_australia_by_url(target_url):
-    cleaned_url = target_url.strip()
-    if "racingaustralia.horse" in cleaned_url and "www.racingaustralia.horse" not in cleaned_url:
-        cleaned_url = cleaned_url.replace("racingaustralia.horse", "www.racingaustralia.horse")
-
-    session = requests.Session()
-
-    # 1. Direct fetch with real desktop headers
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-AU,en;q=0.9",
-        "Referer": "https://www.racingaustralia.horse/"
-    }
-
-    try:
-        res = session.get(cleaned_url, headers=headers, timeout=6)
-        if res.status_code == 200 and ("horse-form-table" in res.text or "race-title" in res.text):
-            return res.text
-    except Exception:
-        pass
-
-    # 2. Free CORS proxy mirrors (Quick 8s timeout)
-    encoded_url = urllib.parse.quote(cleaned_url, safe="")
-    mirrors = [
-        f"https://api.allorigins.win/raw?url={encoded_url}",
-        f"https://corsproxy.io/?{encoded_url}",
-        f"https://api.codetabs.com/v1/proxy?quest={cleaned_url}"
-    ]
-
-    for m_url in mirrors:
-        try:
-            m_res = requests.get(m_url, timeout=8)
-            if m_res.status_code == 200 and len(m_res.text) > 2000:
-                if "horse-form-table" in m_res.text or "race-title" in m_res.text:
-                    return m_res.text
-        except Exception:
-            continue
-
-    raise Exception("Racing Australia WAF Firewall காரணமாக நேரடி URL இணைப்பு தடுக்கப்பட்டது. தயவுசெய்து கீழே உள்ள 'HTML File Upload' அல்லது 'HTML Paste' முறையைப் பயன்படுத்தவும்.")
 
 # =====================================================================
 # HTML ALL FORM PARSER
@@ -330,7 +305,7 @@ def parse_racing_australia_html(html_text):
                     odds_m = re.search(r"(\$[\d/.]+[Ff]?)$", rem_text)
                     p_odds = odds_m.group(1) if odds_m else ("$000" if run_type in ["Trial", "Jump Out"] else "")
 
-                    # Column T: Adjusted Calculated Time
+                    # Column T: Adjusted Calculated Time Calculation
                     calc_time_val = ""
                     if p_time and p_dist:
                         try:
@@ -695,7 +670,7 @@ def process_step2_edited_excel(wb):
 # STREAMLIT UI
 # =====================================================================
 
-tab1, tab2 = st.tabs(["🌐 STEP 1: Racing Australia Input (URL / File / HTML)", "📊 STEP 2: Process Edited Excel (AM Final Score)"])
+tab1, tab2 = st.tabs(["🌐 STEP 1: Racing Australia Input (File / Paste)", "📊 STEP 2: Process Edited Excel (AM Final Score)"])
 
 with tab1:
     st.subheader("1. Racing Australia All Form-லிருந்து Excel உருவாக்குதல்")
@@ -703,76 +678,32 @@ with tab1:
     input_choice = st.radio(
         "உள்ளீட்டு முறையைத் தேர்ந்தெடுக்கவும் (Input Method):",
         [
-            "📁 Upload HTML File (மொபைலில் எளிதான முறை)",
-            "🔗 Direct All Form URL (நேரடி முகவரி)",
+            "📁 Upload Saved Webpage (.mht / .mhtml / .html)",
             "📋 Paste Page Source HTML (குறியீடு பேஸ்ட் செய்தல்)"
         ],
         horizontal=True
     )
 
-    # 1. FILE UPLOAD (Best & Easiest for Mobile)
-    if input_choice == "📁 Upload HTML File (மொபைலில் எளிதான முறை)":
-        st.caption("💡 **மொபைல் வழிமுறை:** Chrome-ல் Racing Australia AllForm பக்கத்தில் 3 புள்ளிகளைத் (︙) தட்டி **Download (⬇️)** கொடுத்தால் `.html` ஃபைலாக சேமிக்கப்படும். அதை இங்கே பதிவேற்றவும்.")
-        uploaded_html = st.file_uploader("Racing Australia HTML ஃபைலை பதிவேற்றவும்:", type=["html", "htm"], key="uploader_html_file")
+    # 1. MHT / MHTML / HTML FILE UPLOAD (Works 100% on Mobile)
+    if input_choice == "📁 Upload Saved Webpage (.mht / .mhtml / .html)":
+        st.caption("💡 **மொபைல் வழிமுறை:** Chrome-ல் Racing Australia AllForm பக்கத்தில் வலதுபுறம் 3 புள்ளிகளைத் (︙) தட்டி **Download (⬇️)** கொடுத்தால் சேமிக்கப்படும் `.mht` அல்லது `.html` ஃபைலை இங்கே தேர்வு செய்யவும்.")
         
-        if uploaded_html is not None:
-            if st.button("🚀 Process Uploaded File & Generate Excel", type="primary", key="btn_file_gen"):
-                with st.spinner("🔄 HTML ஃபைலிலிருந்து பந்தய விவரங்கள் பெறப்படுகின்றன..."):
-                    html_content = uploaded_html.read().decode("utf-8", errors="ignore")
-                    races = parse_racing_australia_html(html_content)
-                    if not races:
-                        st.error("❌ ஃபைலிலிருந்து விவரங்களைப் பிரிக்க முடியவில்லை. சரியான AllForm HTML ஃபைல் தானா என சரிபார்க்கவும்.")
-                    else:
-                        total_horses = sum(len(r["horses"]) for r in races)
-                        total_runs = sum(sum(len(h["runs"]) for h in r["horses"]) for r in races)
-
-                        date_prefix = races[0].get("date_formatted", "02Sep2026")
-                        b4_place = clean_filename(races[0]["place"])
-                        out_filename = f"{date_prefix}_{b4_place}.xlsx"
-
-                        wb = generate_am_pro_step1_workbook(races)
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
-                            temp_path = tmp.name
-                        wb.save(temp_path)
-
-                        with open(temp_path, "rb") as f:
-                            excel_data = f.read()
-
-                        try: os.remove(temp_path)
-                        except Exception: pass
-
-                        st.success(f"🎉 வெற்றி! {len(races)} பந்தயங்கள் | {total_horses} குதிரைகள் | {total_runs} முந்தைய ஓட்டங்கள் பெறப்பட்டன.")
-                        st.download_button(
-                            label=f"📥 Download ({out_filename})",
-                            data=excel_data,
-                            file_name=out_filename,
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True
-                        )
-
-    # 2. DIRECT URL
-    elif input_choice == "🔗 Direct All Form URL (நேரடி முகவரி)":
-        input_url = st.text_input(
-            "Racing Australia All Form URL:",
-            placeholder="https://www.racingaustralia.horse/FreeFields/AllForm.aspx?Key=...",
-            key="direct_web_url_input"
+        # Extended types allowed: mht, mhtml, html, htm
+        uploaded_file = st.file_uploader(
+            "Racing Australia Webpage ஃபைலை பதிவேற்றவும் (.mht, .mhtml, .html):",
+            type=["mht", "mhtml", "html", "htm"],
+            key="uploader_webpage_file"
         )
-        if st.button("🚀 Process URL & Generate Excel", type="primary", key="btn_url_gen"):
-            cleaned_url = input_url.strip()
-            if not cleaned_url:
-                st.warning("⚠️ தயவுசெய்து சரியான Racing Australia URL-ஐ உள்ளிடவும்.")
-            else:
-                status_box = st.status("🔄 இணையதளத்திலிருந்து தகவல்கள் பெறப்படுகின்றன...", expanded=True)
-                try:
-                    status_box.write("🌐 சர்வர் இணைப்பு பெறப்படுகிறது (அதிகபட்சம் 8 வினாடிகள்)...")
-                    html_data = fetch_racing_australia_by_url(cleaned_url)
-
-                    status_box.write("📋 குதிரைகள் மற்றும் முந்தைய ஓட்டங்கள் பிரிக்கப்படுகின்றன...")
-                    races = parse_racing_australia_html(html_data)
-
+        
+        if uploaded_file is not None:
+            if st.button("🚀 Process File & Generate Excel", type="primary", key="btn_file_gen"):
+                with st.spinner("🔄 ஃபைலிலிருந்து அனைத்து பந்தய விவரங்களும் பெறப்படுகின்றன..."):
+                    raw_bytes = uploaded_file.read()
+                    html_content = extract_html_from_bytes(raw_bytes)
+                    races = parse_racing_australia_html(html_content)
+                    
                     if not races:
-                        status_box.update(label="❌ விவரங்களைப் பிரிக்க முடியவில்லை!", state="error")
-                        st.error("Racing Australia WAF தடுத்துள்ளது. மேலே உள்ள 'Upload HTML File' முறையைப் பயன்படுத்தவும்.")
+                        st.error("❌ விவரங்களைப் பிரிக்க முடியவில்லை. சரியான AllForm பக்கம்தானா என சரிபார்க்கவும்.")
                     else:
                         total_horses = sum(len(r["horses"]) for r in races)
                         total_runs = sum(sum(len(h["runs"]) for h in r["horses"]) for r in races)
@@ -792,9 +723,7 @@ with tab1:
                         try: os.remove(temp_path)
                         except Exception: pass
 
-                        status_box.update(label="🎉 Excel கோப்பு தயாராகிவிட்டது!", state="complete", expanded=False)
-                        st.success(f"🎉 வெற்றி! {len(races)} பந்தயங்களுக்கான எக்செல் தயார்!")
-
+                        st.success(f"🎉 வெற்றி! {len(races)} பந்தயங்கள் | {total_horses} குதிரைகள் | {total_runs} முந்தைய ஓட்டங்கள் கண்டறியப்பட்டு எக்செல் தயாரானது.")
                         st.download_button(
                             label=f"📥 Download ({out_filename})",
                             data=excel_data,
@@ -803,11 +732,7 @@ with tab1:
                             use_container_width=True
                         )
 
-                except Exception as e:
-                    status_box.update(label="❌ இணைப்பு தோல்வி!", state="error")
-                    st.error(f"{str(e)}")
-
-    # 3. DIRECT HTML PASTE
+    # 2. DIRECT HTML PASTE (Laptop)
     else:
         html_input = st.text_area(
             "📋 Racing Australia Page Source (HTML Code):",
