@@ -45,7 +45,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown("<div class='main-title'>🏇 AM PRO Racing System</div>", unsafe_allow_html=True)
-st.markdown("<div class='sub-title'>Step 1: All Form to Multi-Sheet Matrix | Step 2: AM Final Score</div>", unsafe_allow_html=True)
+st.markdown("<div class='sub-title'>Master Control Panel: All Features & Highlighting Active</div>", unsafe_allow_html=True)
 
 # =====================================================================
 # HELPER & CLEANING FUNCTIONS
@@ -308,7 +308,6 @@ def parse_racing_australia_html(html_text):
                     odds_m = re.search(r"(\$[\d/.]+[Ff]?)$", rem_text)
                     p_odds = odds_m.group(1) if odds_m else ("$000" if run_type in ["Trial", "Jump Out"] else "")
 
-                    # Column T: Adjusted Calculated Time Calculation
                     calc_time_val = ""
                     if p_time and p_dist:
                         try:
@@ -383,8 +382,6 @@ def generate_am_pro_step1_workbook(races):
     yellow_match_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
     green_win_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
     bold_green_font = Font(name="Arial", size=9, bold=True, color="006100")
-
-    # Font-Only Purple (Bold + Italic)
     purple_font = Font(name="Arial", size=9, bold=True, italic=True, color="7E22CE")
 
     border_thin = Border(
@@ -394,7 +391,9 @@ def generate_am_pro_step1_workbook(races):
         bottom=Side(style='thin', color='D9D9D9')
     )
 
-    for race in races:
+    first_sheet_title = races[0]["sheet_name"] if races else "R1"
+
+    for r_idx, race in enumerate(races, start=1):
         ws = wb.create_sheet(title=race["sheet_name"])
         cur_dist = race["distance"]
         cur_track = race["track_condition"]
@@ -403,7 +402,12 @@ def generate_am_pro_step1_workbook(races):
         ws["A3"] = "Country"
         ws["B3"] = race["country"]
         ws["A4"] = "Place"
-        ws["B4"] = race["place"]
+
+        if r_idx == 1:
+            ws["B4"] = race["place"]
+        else:
+            ws["B4"] = f"='{first_sheet_title}'!B4"
+
         ws["A5"] = "Distance"
         ws["B5"] = cur_dist
         ws["A6"] = "Track Condition"
@@ -413,9 +417,9 @@ def generate_am_pro_step1_workbook(races):
         ws["A8"] = "Horse Count"
         ws["B8"] = len(race["horses"])
 
-        for r_idx in range(3, 9):
-            ws.cell(row=r_idx, column=1).font = bold_font
-            ws.cell(row=r_idx, column=2).font = regular_font
+        for row_i in range(3, 9):
+            ws.cell(row=row_i, column=1).font = bold_font
+            ws.cell(row=row_i, column=2).font = regular_font
 
         # 2. Current Race Table (Row 11)
         current_headers = [
@@ -519,27 +523,21 @@ def generate_am_pro_step1_workbook(races):
                     cell.border = border_thin
                     cell.font = regular_font
 
-                # Highlighting:
-                # 1. Finishing Pos (1st, 2nd, 3rd) -> Green
                 pos_str = str(run.get("pos", "")).lower()
                 if "1 of" in pos_str or "2 of" in pos_str or "3 of" in pos_str or pos_str in ["1", "2", "3"]:
                     ws.cell(row=r_ptr, column=4).fill = green_win_fill
                     ws.cell(row=r_ptr, column=4).font = bold_green_font
 
-                # 2. Same Distance -> Yellow
                 if re.sub(r"\D", "", run.get("distance", "")) == re.sub(r"\D", "", cur_dist):
                     ws.cell(row=r_ptr, column=6).fill = yellow_match_fill
 
-                # 3. Same Track -> Yellow
                 if normalize_track(run.get("track", "")) == normalize_track(cur_track):
                     ws.cell(row=r_ptr, column=7).fill = yellow_match_fill
 
-                # 4. Same Barrier Match -> Yellow
                 past_barrier_val = str(run.get("barrier", "")).strip()
                 if cur_barrier_val and past_barrier_val and (cur_barrier_val == past_barrier_val) and past_barrier_val != "0":
                     ws.cell(row=r_ptr, column=8).fill = yellow_match_fill
 
-                # 5. Same Jockey -> Yellow Fill
                 past_jockey_clean = clean_jockey_name(run.get("jockey", ""))
                 if cur_jockey_clean and past_jockey_clean and (cur_jockey_clean in past_jockey_clean or past_jockey_clean in cur_jockey_clean):
                     ws.cell(row=r_ptr, column=11).fill = yellow_match_fill
@@ -553,7 +551,7 @@ def generate_am_pro_step1_workbook(races):
 
         last_past_run_row = max(r_ptr, 120)
 
-        # Dynamic Rule: Font-only Bold+Italic+Purple (Matching R1:R24)
+        # Dynamic Conditional Formatting Rule for Column K (Matches R1:R24)
         cf_range = f"K{first_past_run_row}:K{last_past_run_row}"
         purple_font_rule = FormulaRule(
             formula=[f'AND(K{first_past_run_row}<>"", COUNTIF($R$1:$R$24, "*"&TRIM(K{first_past_run_row})&"*")>0)'],
@@ -567,7 +565,7 @@ def generate_am_pro_step1_workbook(races):
     return wb
 
 # =====================================================================
-# STEP 2: PROCESS EDITED EXCEL (FULL DYNAMIC HIGHLIGHTS INCL. B4 & B7)
+# STEP 2: PROCESS EDITED EXCEL (ALL RULES ACTIVE)
 # =====================================================================
 
 def process_step2_edited_excel(wb):
@@ -576,22 +574,19 @@ def process_step2_edited_excel(wb):
     bold_green_font = Font(name="Arial", size=9, bold=True, color="006100")
     purple_font = Font(name="Arial", size=9, bold=True, italic=True, color="7E22CE")
 
+    # 1. Read Master Place Code strictly from the first sheet (R1) Cell B4!
+    first_ws = wb.worksheets[0]
+    r1_master_place = str(first_ws["B4"].value or "").strip()
+    r1_master_place = re.sub(r"^[='\"+]+", "", r1_master_place).strip()
+    r1_master_norm = normalize_code(r1_master_place)
+
     for ws in wb.worksheets:
-        # B4: User edited Place Code / Venue
-        cur_place_b4 = str(ws["B4"].value or "").strip()
-        cur_place_norm = normalize_code(cur_place_b4)
-
-        # B5: Distance
         cur_dist = str(ws["B5"].value or "").strip()
-
-        # B6: Track Condition
         cur_track = str(ws["B6"].value or "").strip()
-
-        # B7: User edited Class
         cur_class_b7 = str(ws["B7"].value or "").strip()
         cur_class_norm = normalize_code(cur_class_b7)
 
-        # Read live winning jockeys entered in Column R (Rows 1 to 24)
+        # Live winning jockeys in Column R (Rows 1 to 24)
         target_jockeys_r = set()
         for r_idx in range(1, 25):
             val = str(ws.cell(row=r_idx, column=18).value or "").strip()
@@ -600,7 +595,6 @@ def process_step2_edited_excel(wb):
                 if cleaned_j:
                     target_jockeys_r.add(cleaned_j)
 
-        # Read Current Horses Map (Rows 12 onwards)
         horse_data_map = {}
         for r in range(12, ws.max_row + 1):
             h_no = str(ws.cell(row=r, column=1).value or "").strip()
@@ -630,9 +624,9 @@ def process_step2_edited_excel(wb):
                 continue
 
             date_cell = ws.cell(row=r, column=1) # Col A
-            place_cell = ws.cell(row=r, column=2) # Col B (Matches B4 Place)
+            place_cell = ws.cell(row=r, column=2) # Col B
             pos_cell = ws.cell(row=r, column=4) # Col D
-            class_cell = ws.cell(row=r, column=5) # Col E (Matches B7 Class)
+            class_cell = ws.cell(row=r, column=5) # Col E
             dist_cell = ws.cell(row=r, column=6) # Col F
             track_cell = ws.cell(row=r, column=7) # Col G
             barrier_cell = ws.cell(row=r, column=8) # Col H
@@ -646,10 +640,10 @@ def process_step2_edited_excel(wb):
             if str(date_cell.value or "").lower() == "date":
                 continue
 
-            # 1. NEW: Column B Place Match with Cell B4 -> Yellow Highlight!
-            if place_cell.value and cur_place_norm:
+            # 1. UNIVERSAL PLACE MATCH (Column B matching R1!B4 Master Place Code) -> Yellow Highlight!
+            if place_cell.value and r1_master_norm:
                 past_place_norm = normalize_code(place_cell.value)
-                if cur_place_norm == past_place_norm or cur_place_norm in past_place_norm or past_place_norm in cur_place_norm:
+                if r1_master_norm == past_place_norm or r1_master_norm in past_place_norm or past_place_norm in r1_master_norm:
                     place_cell.fill = yellow_match_fill
 
             # 2. Finishing Pos (1st, 2nd, 3rd) -> Green
@@ -657,7 +651,7 @@ def process_step2_edited_excel(wb):
                 pos_cell.fill = green_win_fill
                 pos_cell.font = bold_green_font
 
-            # 3. NEW: Column E Class Match with Cell B7 -> Yellow Highlight!
+            # 3. Class Match (Column E matching B7 Class) -> Yellow Highlight!
             if class_cell.value and cur_class_norm:
                 past_class_norm = normalize_code(class_cell.value)
                 if cur_class_norm == past_class_norm or cur_class_norm in past_class_norm or past_class_norm in cur_class_norm:
@@ -680,9 +674,7 @@ def process_step2_edited_excel(wb):
                 if cur_bar and past_bar and (cur_bar == past_bar) and past_bar != "0":
                     barrier_cell.fill = yellow_match_fill
 
-            # 7. Jockey Match (Col K):
-            # If in R1:R24 -> PURPLE FONT ONLY (BACKGROUND PRESERVED)!
-            # Else if in Current Jockey -> YELLOW FILL!
+            # 7. Jockey Match (Col K) -> If in R1:R24 -> PURPLE FONT ONLY (BACKGROUND PRESERVED)
             if jockey_cell.value:
                 past_jock_clean = clean_jockey_name(str(jockey_cell.value))
                 matched_r = False
@@ -697,7 +689,6 @@ def process_step2_edited_excel(wb):
                     if cur_jock and past_jock_clean and (cur_jock in past_jock_clean or past_jock_clean in cur_jock):
                         jockey_cell.fill = yellow_match_fill
 
-        # Maintain 8.5 column width across all sheets
         for col_letter in ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T"]:
             ws.column_dimensions[col_letter].width = 8.5
 
@@ -714,8 +705,7 @@ with tab1:
         "உள்ளீட்டு முறையைத் தேர்ந்தெடுக்கவும் (Input Method):",
         [
             "📁 Upload Webpage File (.mht / .mhtml / .html)",
-            "📋 Paste Page Source HTML (குறியீடு பேஸ்ட் செய்தல்)",
-            "🔗 Direct All Form URL (நேரடி முகவரி)"
+            "📋 Paste Page Source HTML (குறியீடு பேஸ்ட் செய்தல்)"
         ],
         horizontal=True
     )
@@ -765,7 +755,7 @@ with tab1:
                             use_container_width=True
                         )
 
-    elif input_choice == "📋 Paste Page Source HTML (குறியீடு பேஸ்ட் செய்தல்)":
+    else:
         html_input = st.text_area(
             "📋 Racing Australia Page Source (HTML Code):",
             height=240,
@@ -809,18 +799,9 @@ with tab1:
                             use_container_width=True
                         )
 
-    else:
-        input_url = st.text_input(
-            "Racing Australia All Form URL:",
-            placeholder="https://www.racingaustralia.horse/FreeFields/AllForm.aspx?Key=...",
-            key="direct_web_url_input"
-        )
-        if st.button("🚀 Process URL & Generate Excel", type="primary", key="btn_url_gen"):
-            st.info("💡 Racing Australia Firewall உள்ளதால் மொபைல் Download செய்யப்பட்ட `.mht` ஃபைலை 'Upload Webpage File' மூலம் பதிவேற்றவும்.")
-
 with tab2:
     st.subheader("2. திருத்தப்பட்ட Multi-Sheet Excel-ஐப் பதிவேற்றி Final அறிக்கை பெறுதல்")
-    st.caption("B4-ல் Place Code, B7-ல் Class, மற்றும் R1:R24-ல் வெற்றிபெற்ற ஜாக்கி பெயர்கள் உள்ளிட்ட மாற்றங்களை முடித்த பின் இங்கே பதிவேற்றவும்.")
+    st.caption("R1 ஷீட்டில் B4 Place Code, B7 Class மற்றும் R1:R24 வெற்றிபெற்ற ஜாக்கி பெயர்களை எடிட் செய்த பின் இங்கே பதிவேற்றவும்.")
 
     uploaded_file = st.file_uploader(
         "📂 திருத்தப்பட்ட Multi-Sheet Excel (.xlsx) ஃபைலை இங்கே பதிவேற்றவும்:",
@@ -830,7 +811,7 @@ with tab2:
 
     if uploaded_file is not None:
         if st.button("⚡ Process Final Scoring & Highlighting", type="primary", key="btn_step2"):
-            with st.spinner("🔄 B4 Place, B7 Class, Column K Purple ஜாக்கி எழுத்துக்கள் மற்றும் அனைத்து ஹைலைட்களும் புதுப்பிக்கப்படுகின்றன..."):
+            with st.spinner("🔄 அனைத்து ஷீட்டுகளும் பரிசீலிக்கப்பட்டு ஹைலைட்கள் மற்றும் ஜாக்கி பெயர்கள் புதுப்பிக்கப்படுகின்றன..."):
                 try:
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
                         tmp.write(uploaded_file.read())
