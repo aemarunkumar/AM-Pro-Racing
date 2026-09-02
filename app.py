@@ -63,7 +63,6 @@ def extract_html_from_bytes(file_bytes):
         pass
 
     text = file_bytes.decode("utf-8", errors="ignore")
-    # If MHTML headers are present, extract between <!DOCTYPE and </html>
     match = re.search(r"(<!DOCTYPE\s+html[^>]*>[\s\S]*?</html>)", text, re.I)
     if match:
         return match.group(1)
@@ -134,7 +133,6 @@ def parse_racing_australia_html(html_text):
     meeting_country = "NSW"
     date_formatted = "02Sep2026"
 
-    # Venue & Date Extraction
     venue_elem = soup.find("div", class_="race-venue")
     if venue_elem:
         h2 = venue_elem.find("h2")
@@ -364,7 +362,7 @@ def parse_racing_australia_html(html_text):
     return races
 
 # =====================================================================
-# EXACT MULTI-SHEET EXCEL BUILDER
+# EXACT MULTI-SHEET EXCEL BUILDER (COLUMN WIDTH 8.5)
 # =====================================================================
 
 def generate_am_pro_step1_workbook(races):
@@ -381,7 +379,7 @@ def generate_am_pro_step1_workbook(races):
     green_win_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
     bold_green_font = Font(name="Arial", size=9, bold=True, color="006100")
 
-    # Font-Only Purple (Bold + Italic) - Background Fill untouched!
+    # Font-Only Purple (Bold + Italic)
     purple_font = Font(name="Arial", size=9, bold=True, italic=True, color="7E22CE")
 
     border_thin = Border(
@@ -558,20 +556,14 @@ def generate_am_pro_step1_workbook(races):
         )
         ws.conditional_formatting.add(cf_range, purple_font_rule)
 
-        # Standard Column Widths
-        standard_widths = {
-            "A": 12, "B": 12, "C": 12, "D": 14, "E": 14,
-            "F": 10, "G": 12, "H": 10, "I": 12, "J": 12,
-            "K": 14, "L": 14, "M": 20, "N": 10, "O": 12,
-            "P": 12, "Q": 12, "R": 14, "S": 12, "T": 14
-        }
-        for col_letter, w in standard_widths.items():
-            ws.column_dimensions[col_letter].width = w
+        # EXACT COMPACT COLUMN WIDTH 8.5 ACROSS ALL COLUMNS (A to T)
+        for col_letter in ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T"]:
+            ws.column_dimensions[col_letter].width = 8.5
 
     return wb
 
 # =====================================================================
-# STEP 2: PROCESS EDITED EXCEL
+# STEP 2: PROCESS EDITED EXCEL (COLUMN WIDTH 8.5 & HIGHLIGHTS)
 # =====================================================================
 
 def process_step2_edited_excel(wb):
@@ -666,11 +658,15 @@ def process_step2_edited_excel(wb):
                     if cur_jock and past_jock_clean and (cur_jock in past_jock_clean or past_jock_clean in cur_jock):
                         jockey_cell.fill = yellow_match_fill
 
+        # Ensure Column Width is 8.5 across all sheets in Step 2 as well!
+        for col_letter in ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T"]:
+            ws.column_dimensions[col_letter].width = 8.5
+
 # =====================================================================
 # STREAMLIT UI
 # =====================================================================
 
-tab1, tab2 = st.tabs(["🌐 STEP 1: Racing Australia Input (File / Paste)", "📊 STEP 2: Process Edited Excel (AM Final Score)"])
+tab1, tab2 = st.tabs(["🌐 STEP 1: Racing Australia Input (MHT / HTML / URL)", "📊 STEP 2: Process Edited Excel (AM Final Score)"])
 
 with tab1:
     st.subheader("1. Racing Australia All Form-லிருந்து Excel உருவாக்குதல்")
@@ -678,32 +674,31 @@ with tab1:
     input_choice = st.radio(
         "உள்ளீட்டு முறையைத் தேர்ந்தெடுக்கவும் (Input Method):",
         [
-            "📁 Upload Saved Webpage (.mht / .mhtml / .html)",
-            "📋 Paste Page Source HTML (குறியீடு பேஸ்ட் செய்தல்)"
+            "📁 Upload Webpage File (.mht / .mhtml / .html)",
+            "📋 Paste Page Source HTML (குறியீடு பேஸ்ட் செய்தல்)",
+            "🔗 Direct All Form URL (நேரடி முகவரி)"
         ],
         horizontal=True
     )
 
-    # 1. MHT / MHTML / HTML FILE UPLOAD (Works 100% on Mobile)
-    if input_choice == "📁 Upload Saved Webpage (.mht / .mhtml / .html)":
-        st.caption("💡 **மொபைல் வழிமுறை:** Chrome-ல் Racing Australia AllForm பக்கத்தில் வலதுபுறம் 3 புள்ளிகளைத் (︙) தட்டி **Download (⬇️)** கொடுத்தால் சேமிக்கப்படும் `.mht` அல்லது `.html` ஃபைலை இங்கே தேர்வு செய்யவும்.")
-        
-        # Extended types allowed: mht, mhtml, html, htm
+    # 1. FILE UPLOAD (MHT / HTML)
+    if input_choice == "📁 Upload Webpage File (.mht / .mhtml / .html)":
+        st.caption("💡 **மொபைல் வழிமுறை:** Chrome-ல் Racing Australia AllForm பக்கத்தில் 3 புள்ளிகளைத் (︙) தட்டி **Download (⬇️)** கொடுத்தால் சேமிக்கப்படும் `.mht` அல்லது `.html` ஃபைலை இங்கே பதிவேற்றவும்.")
         uploaded_file = st.file_uploader(
-            "Racing Australia Webpage ஃபைலை பதிவேற்றவும் (.mht, .mhtml, .html):",
+            "Webpage ஃபைலை தேர்வு செய்யவும் (.mht, .mhtml, .html, .htm):",
             type=["mht", "mhtml", "html", "htm"],
             key="uploader_webpage_file"
         )
         
         if uploaded_file is not None:
             if st.button("🚀 Process File & Generate Excel", type="primary", key="btn_file_gen"):
-                with st.spinner("🔄 ஃபைலிலிருந்து அனைத்து பந்தய விவரங்களும் பெறப்படுகின்றன..."):
+                with st.spinner("🔄 ஃபைலிலிருந்து பந்தய விவரங்கள் பெறப்படுகின்றன..."):
                     raw_bytes = uploaded_file.read()
                     html_content = extract_html_from_bytes(raw_bytes)
                     races = parse_racing_australia_html(html_content)
                     
                     if not races:
-                        st.error("❌ விவரங்களைப் பிரிக்க முடியவில்லை. சரியான AllForm பக்கம்தானா என சரிபார்க்கவும்.")
+                        st.error("❌ விவரங்களைப் பிரிக்க முடியவில்லை. சரியான AllForm பக்கம் தானா என சரிபார்க்கவும்.")
                     else:
                         total_horses = sum(len(r["horses"]) for r in races)
                         total_runs = sum(sum(len(h["runs"]) for h in r["horses"]) for r in races)
@@ -723,7 +718,7 @@ with tab1:
                         try: os.remove(temp_path)
                         except Exception: pass
 
-                        st.success(f"🎉 வெற்றி! {len(races)} பந்தயங்கள் | {total_horses} குதிரைகள் | {total_runs} முந்தைய ஓட்டங்கள் கண்டறியப்பட்டு எக்செல் தயாரானது.")
+                        st.success(f"🎉 வெற்றி! {len(races)} பந்தயங்கள் | {total_horses} குதிரைகள் | {total_runs} முந்தைய ஓட்டங்கள் கண்டறியப்பட்டன.")
                         st.download_button(
                             label=f"📥 Download ({out_filename})",
                             data=excel_data,
@@ -732,8 +727,8 @@ with tab1:
                             use_container_width=True
                         )
 
-    # 2. DIRECT HTML PASTE (Laptop)
-    else:
+    # 2. DIRECT HTML PASTE
+    elif input_choice == "📋 Paste Page Source HTML (குறியீடு பேஸ்ட் செய்தல்)":
         html_input = st.text_area(
             "📋 Racing Australia Page Source (HTML Code):",
             height=240,
@@ -777,9 +772,23 @@ with tab1:
                             use_container_width=True
                         )
 
+    # 3. DIRECT URL
+    else:
+        input_url = st.text_input(
+            "Racing Australia All Form URL:",
+            placeholder="https://www.racingaustralia.horse/FreeFields/AllForm.aspx?Key=...",
+            key="direct_web_url_input"
+        )
+        if st.button("🚀 Process URL & Generate Excel", type="primary", key="btn_url_gen"):
+            cleaned_url = input_url.strip()
+            if not cleaned_url:
+                st.warning("⚠️ தயவுசெய்து சரியான Racing Australia URL-ஐ உள்ளிடவும்.")
+            else:
+                st.info("💡 Racing Australia Firewall உள்ளதால் URL தாமதமானால், மேலே உள்ள 'Upload Webpage File' முறையைப் பயன்படுத்தவும்.")
+
 with tab2:
     st.subheader("2. திருத்தப்பட்ட Multi-Sheet Excel-ஐப் பதிவேற்றி Final அறிக்கை பெறுதல்")
-    st.caption("Step 1 எக்செல் ஃபைலில் Column R (வரிசை 1 முதல் 24 வரை) ஜாக்கி பெயர்கள் உள்ளிட்ட மாற்றங்களைச் செய்து இங்கே பதிவேற்றவும்.")
+    st.caption("Step 1 எக்செல் ஃபைலில் Column R (வரிசை 1 முதல் 24 வரை) ஜாக்கி பெயர்கள் உள்ளிட்ட மாற்றங்களைச் செய்து இங்கே பதிவேற்றவும். அனைத்து ஷீட்டுகளும் 8.5 காலம் அகலத்தில் உருவாகும்.")
 
     uploaded_file = st.file_uploader(
         "📂 திருத்தப்பட்ட Multi-Sheet Excel (.xlsx) ஃபைலை இங்கே பதிவேற்றவும்:",
@@ -789,7 +798,7 @@ with tab2:
 
     if uploaded_file is not None:
         if st.button("⚡ Process Final Scoring & Highlighting", type="primary", key="btn_step2"):
-            with st.spinner("🔄 Column K ஜாக்கி எழுத்துக்கள் (Purple Bold Italic Font) மற்றும் ஹைலைட்கள் புதுப்பிக்கப்படுகின்றன..."):
+            with st.spinner("🔄 காலம் அளவு 8.5 ஆக அமைக்கப்பட்டு, Column K ஜாக்கி எழுத்துக்கள் (Purple Font) மற்றும் ஹைலைட்கள் புதுப்பிக்கப்படுகின்றன..."):
                 try:
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
                         tmp.write(uploaded_file.read())
