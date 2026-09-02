@@ -95,6 +95,11 @@ def normalize_track(t_str):
     if "firm" in t_clean: return "firm"
     return t_clean
 
+def normalize_code(c_str):
+    if not c_str:
+        return ""
+    return re.sub(r"[\s\-_.]", "", str(c_str)).strip().lower()
+
 def parse_time_to_seconds(t_str):
     if not t_str or not isinstance(t_str, str):
         return 0.0
@@ -362,7 +367,7 @@ def parse_racing_australia_html(html_text):
     return races
 
 # =====================================================================
-# EXACT MULTI-SHEET EXCEL BUILDER (COLUMN WIDTH 8.5)
+# EXACT MULTI-SHEET EXCEL BUILDER
 # =====================================================================
 
 def generate_am_pro_step1_workbook(races):
@@ -556,14 +561,13 @@ def generate_am_pro_step1_workbook(races):
         )
         ws.conditional_formatting.add(cf_range, purple_font_rule)
 
-        # EXACT COMPACT COLUMN WIDTH 8.5 ACROSS ALL COLUMNS (A to T)
         for col_letter in ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T"]:
             ws.column_dimensions[col_letter].width = 8.5
 
     return wb
 
 # =====================================================================
-# STEP 2: PROCESS EDITED EXCEL (COLUMN WIDTH 8.5 & HIGHLIGHTS)
+# STEP 2: PROCESS EDITED EXCEL (FULL DYNAMIC HIGHLIGHTS INCL. B4 & B7)
 # =====================================================================
 
 def process_step2_edited_excel(wb):
@@ -573,9 +577,21 @@ def process_step2_edited_excel(wb):
     purple_font = Font(name="Arial", size=9, bold=True, italic=True, color="7E22CE")
 
     for ws in wb.worksheets:
+        # B4: User edited Place Code / Venue
+        cur_place_b4 = str(ws["B4"].value or "").strip()
+        cur_place_norm = normalize_code(cur_place_b4)
+
+        # B5: Distance
         cur_dist = str(ws["B5"].value or "").strip()
+
+        # B6: Track Condition
         cur_track = str(ws["B6"].value or "").strip()
 
+        # B7: User edited Class
+        cur_class_b7 = str(ws["B7"].value or "").strip()
+        cur_class_norm = normalize_code(cur_class_b7)
+
+        # Read live winning jockeys entered in Column R (Rows 1 to 24)
         target_jockeys_r = set()
         for r_idx in range(1, 25):
             val = str(ws.cell(row=r_idx, column=18).value or "").strip()
@@ -584,6 +600,7 @@ def process_step2_edited_excel(wb):
                 if cleaned_j:
                     target_jockeys_r.add(cleaned_j)
 
+        # Read Current Horses Map (Rows 12 onwards)
         horse_data_map = {}
         for r in range(12, ws.max_row + 1):
             h_no = str(ws.cell(row=r, column=1).value or "").strip()
@@ -612,13 +629,16 @@ def process_step2_edited_excel(wb):
                     horse_data_map[c1_val]["jockey"] = clean_jockey_name(c4_val)
                 continue
 
-            pos_cell = ws.cell(row=r, column=4)
+            date_cell = ws.cell(row=r, column=1) # Col A
+            place_cell = ws.cell(row=r, column=2) # Col B (Matches B4 Place)
+            pos_cell = ws.cell(row=r, column=4) # Col D
+            class_cell = ws.cell(row=r, column=5) # Col E (Matches B7 Class)
+            dist_cell = ws.cell(row=r, column=6) # Col F
+            track_cell = ws.cell(row=r, column=7) # Col G
+            barrier_cell = ws.cell(row=r, column=8) # Col H
+            jockey_cell = ws.cell(row=r, column=11) # Col K
+
             pos_str = str(pos_cell.value or "").lower()
-            date_cell = ws.cell(row=r, column=1)
-            dist_cell = ws.cell(row=r, column=6)
-            track_cell = ws.cell(row=r, column=7)
-            barrier_cell = ws.cell(row=r, column=8)
-            jockey_cell = ws.cell(row=r, column=11)
 
             if not date_cell.value and not pos_cell.value:
                 continue
@@ -626,24 +646,43 @@ def process_step2_edited_excel(wb):
             if str(date_cell.value or "").lower() == "date":
                 continue
 
+            # 1. NEW: Column B Place Match with Cell B4 -> Yellow Highlight!
+            if place_cell.value and cur_place_norm:
+                past_place_norm = normalize_code(place_cell.value)
+                if cur_place_norm == past_place_norm or cur_place_norm in past_place_norm or past_place_norm in cur_place_norm:
+                    place_cell.fill = yellow_match_fill
+
+            # 2. Finishing Pos (1st, 2nd, 3rd) -> Green
             if "1 of" in pos_str or "2 of" in pos_str or "3 of" in pos_str or pos_str in ["1", "2", "3", "1st", "2nd", "3rd"]:
                 pos_cell.fill = green_win_fill
                 pos_cell.font = bold_green_font
 
+            # 3. NEW: Column E Class Match with Cell B7 -> Yellow Highlight!
+            if class_cell.value and cur_class_norm:
+                past_class_norm = normalize_code(class_cell.value)
+                if cur_class_norm == past_class_norm or cur_class_norm in past_class_norm or past_class_norm in cur_class_norm:
+                    class_cell.fill = yellow_match_fill
+
+            # 4. Same Distance (Col F) -> Yellow
             if dist_cell.value and cur_dist:
                 if re.sub(r"\D", "", str(dist_cell.value)) == re.sub(r"\D", "", cur_dist):
                     dist_cell.fill = yellow_match_fill
 
+            # 5. Same Track Condition (Col G) -> Yellow
             if track_cell.value and cur_track:
                 if normalize_track(str(track_cell.value)) == normalize_track(cur_track):
                     track_cell.fill = yellow_match_fill
 
+            # 6. Same Barrier (Col H) -> Yellow
             if current_eval_horse and barrier_cell.value:
                 cur_bar = horse_data_map[current_eval_horse]["barrier"]
                 past_bar = str(barrier_cell.value).strip()
                 if cur_bar and past_bar and (cur_bar == past_bar) and past_bar != "0":
                     barrier_cell.fill = yellow_match_fill
 
+            # 7. Jockey Match (Col K):
+            # If in R1:R24 -> PURPLE FONT ONLY (BACKGROUND PRESERVED)!
+            # Else if in Current Jockey -> YELLOW FILL!
             if jockey_cell.value:
                 past_jock_clean = clean_jockey_name(str(jockey_cell.value))
                 matched_r = False
@@ -658,7 +697,7 @@ def process_step2_edited_excel(wb):
                     if cur_jock and past_jock_clean and (cur_jock in past_jock_clean or past_jock_clean in cur_jock):
                         jockey_cell.fill = yellow_match_fill
 
-        # Ensure Column Width is 8.5 across all sheets in Step 2 as well!
+        # Maintain 8.5 column width across all sheets
         for col_letter in ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T"]:
             ws.column_dimensions[col_letter].width = 8.5
 
@@ -681,7 +720,6 @@ with tab1:
         horizontal=True
     )
 
-    # 1. FILE UPLOAD (MHT / HTML)
     if input_choice == "📁 Upload Webpage File (.mht / .mhtml / .html)":
         st.caption("💡 **மொபைல் வழிமுறை:** Chrome-ல் Racing Australia AllForm பக்கத்தில் 3 புள்ளிகளைத் (︙) தட்டி **Download (⬇️)** கொடுத்தால் சேமிக்கப்படும் `.mht` அல்லது `.html` ஃபைலை இங்கே பதிவேற்றவும்.")
         uploaded_file = st.file_uploader(
@@ -727,7 +765,6 @@ with tab1:
                             use_container_width=True
                         )
 
-    # 2. DIRECT HTML PASTE
     elif input_choice == "📋 Paste Page Source HTML (குறியீடு பேஸ்ட் செய்தல்)":
         html_input = st.text_area(
             "📋 Racing Australia Page Source (HTML Code):",
@@ -772,7 +809,6 @@ with tab1:
                             use_container_width=True
                         )
 
-    # 3. DIRECT URL
     else:
         input_url = st.text_input(
             "Racing Australia All Form URL:",
@@ -780,15 +816,11 @@ with tab1:
             key="direct_web_url_input"
         )
         if st.button("🚀 Process URL & Generate Excel", type="primary", key="btn_url_gen"):
-            cleaned_url = input_url.strip()
-            if not cleaned_url:
-                st.warning("⚠️ தயவுசெய்து சரியான Racing Australia URL-ஐ உள்ளிடவும்.")
-            else:
-                st.info("💡 Racing Australia Firewall உள்ளதால் URL தாமதமானால், மேலே உள்ள 'Upload Webpage File' முறையைப் பயன்படுத்தவும்.")
+            st.info("💡 Racing Australia Firewall உள்ளதால் மொபைல் Download செய்யப்பட்ட `.mht` ஃபைலை 'Upload Webpage File' மூலம் பதிவேற்றவும்.")
 
 with tab2:
     st.subheader("2. திருத்தப்பட்ட Multi-Sheet Excel-ஐப் பதிவேற்றி Final அறிக்கை பெறுதல்")
-    st.caption("Step 1 எக்செல் ஃபைலில் Column R (வரிசை 1 முதல் 24 வரை) ஜாக்கி பெயர்கள் உள்ளிட்ட மாற்றங்களைச் செய்து இங்கே பதிவேற்றவும். அனைத்து ஷீட்டுகளும் 8.5 காலம் அகலத்தில் உருவாகும்.")
+    st.caption("B4-ல் Place Code, B7-ல் Class, மற்றும் R1:R24-ல் வெற்றிபெற்ற ஜாக்கி பெயர்கள் உள்ளிட்ட மாற்றங்களை முடித்த பின் இங்கே பதிவேற்றவும்.")
 
     uploaded_file = st.file_uploader(
         "📂 திருத்தப்பட்ட Multi-Sheet Excel (.xlsx) ஃபைலை இங்கே பதிவேற்றவும்:",
@@ -798,7 +830,7 @@ with tab2:
 
     if uploaded_file is not None:
         if st.button("⚡ Process Final Scoring & Highlighting", type="primary", key="btn_step2"):
-            with st.spinner("🔄 காலம் அளவு 8.5 ஆக அமைக்கப்பட்டு, Column K ஜாக்கி எழுத்துக்கள் (Purple Font) மற்றும் ஹைலைட்கள் புதுப்பிக்கப்படுகின்றன..."):
+            with st.spinner("🔄 B4 Place, B7 Class, Column K Purple ஜாக்கி எழுத்துக்கள் மற்றும் அனைத்து ஹைலைட்களும் புதுப்பிக்கப்படுகின்றன..."):
                 try:
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
                         tmp.write(uploaded_file.read())
