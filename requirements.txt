@@ -1,7 +1,5 @@
 streamlit
 requests
-cloudscraper
-curl_cffi
 beautifulsoup4
 openpyxl
 lxml
